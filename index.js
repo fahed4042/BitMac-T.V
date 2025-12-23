@@ -1,5 +1,5 @@
 const express = require('express');
-const { chromium } = require('playwright'); // نستخدم Playwright بدل Puppeteer
+const { chromium } = require('playwright');
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
@@ -16,24 +16,19 @@ const pageUrl = "https://egydead.media/category/افلام-كرتون/?page=2";
 
 // دالة استخراج روابط الفيديو
 async function extractVideoLinks(url) {
-  try {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-    await page.goto(url, { waitUntil: 'networkidle' });
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+  await page.goto(url, { waitUntil: 'networkidle' });
 
-    // اجلب كل الروابط في الصفحة التي تحتوي على الأفلام
-    const links = await page.evaluate(() => {
-      const anchors = Array.from(document.querySelectorAll("a"));
-      return anchors
-        .map(a => a.href)
-        .filter(href => href.includes("/movies/") || href.includes("/films/"));
-    });
+  const links = await page.evaluate(() => {
+    const anchors = Array.from(document.querySelectorAll("a"));
+    return anchors
+      .map(a => a.href)
+      .filter(href => href.includes("/movies/") || href.includes("/films/"));
+  });
 
-    await browser.close();
-    return [...new Set(links)]; // إزالة التكرارات
-  } catch (err) {
-    return ["خطأ: " + err.toString()];
-  }
+  await browser.close();
+  return [...new Set(links)];
 }
 
 // دالة إرسال الروابط للبوت مباشرة
