@@ -7,9 +7,9 @@ app.use(express.json());
 
 const port = process.env.PORT || 3000;
 
-// 🔹 ضع التوكن ورقم الحساب هنا مباشرة
-const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw"; // توكن البوت
-const CHAT_ID = "1544455907"; // رقم حسابك
+// 🔹 توكن البوت ورقم حسابك
+const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw";
+const CHAT_ID = "1544455907";
 
 if (!TOKEN || !CHAT_ID) {
   console.error("❌ لم يتم توفير رمز بوت تيليجرام أو Chat ID!");
@@ -18,7 +18,7 @@ if (!TOKEN || !CHAT_ID) {
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// URL صفحة الفئة التي تريد استخراجها
+// رابط صفحة الفئة
 const categoryUrl = "https://egydead.media/category/افلام-كرتون/?page=2";
 
 // تخزين روابط الفيديو الحالية
@@ -27,7 +27,7 @@ let videoLinksCache = {};
 // دالة استخراج روابط صفحات الأفلام من صفحة الفئة
 async function extractFilmLinks(pageUrl) {
   const browser = await puppeteer.launch({
-    headless: "new",
+    headless: true,
     args: ["--no-sandbox", "--disable-setuid-sandbox"]
   });
   const page = await browser.newPage();
@@ -48,7 +48,7 @@ async function extractFilmLinks(pageUrl) {
 async function extractVideoFromFilm(filmUrl) {
   try {
     const browser = await puppeteer.launch({
-      headless: "new",
+      headless: true,
       args: ["--no-sandbox", "--disable-setuid-sandbox"]
     });
     const page = await browser.newPage();
@@ -71,7 +71,7 @@ async function extractVideoFromFilm(filmUrl) {
   }
 }
 
-// استخراج كل الفيديوهات من صفحة الفئة بشكل متوازي
+// استخراج كل الفيديوهات من صفحة الفئة بشكل سريع ومتزامن
 async function extractCategoryVideosFast() {
   const filmLinks = await extractFilmLinks(categoryUrl);
 
