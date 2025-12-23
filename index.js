@@ -1,11 +1,13 @@
 const express = require('express');
-const puppeteer = require('puppeteer'); // استخدم puppeteer العادي
+const puppeteer = require('puppeteer');
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 app.use(express.json());
 
 const port = process.env.PORT || 3000;
+
+// 🔹 ضع التوكن ورقم الحساب هنا مباشرة
 const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw";
 const CHAT_ID = "1544455907";
 
@@ -16,10 +18,13 @@ if (!TOKEN || !CHAT_ID) {
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
+// رابط صفحة الفئة
 const categoryUrl = "https://egydead.media/category/افلام-كرتون/?page=2";
+
+// تخزين روابط الفيديو الحالية
 let videoLinksCache = {};
 
-// استخراج روابط صفحات الأفلام
+// دالة استخراج روابط صفحات الأفلام من صفحة الفئة
 async function extractFilmLinks(pageUrl) {
   const browser = await puppeteer.launch({
     headless: true,
@@ -39,7 +44,7 @@ async function extractFilmLinks(pageUrl) {
   return [...new Set(links)];
 }
 
-// استخراج رابط الفيديو من صفحة الفيلم
+// دالة استخراج رابط الفيديو الحقيقي من صفحة فيلم
 async function extractVideoFromFilm(filmUrl) {
   try {
     const browser = await puppeteer.launch({
@@ -52,8 +57,10 @@ async function extractVideoFromFilm(filmUrl) {
     const videoLink = await page.evaluate(() => {
       const iframe = document.querySelector("iframe[src]");
       if (iframe) return iframe.src;
+
       const source = document.querySelector("video source");
       if (source) return source.src;
+
       return null;
     });
 
@@ -64,36 +71,46 @@ async function extractVideoFromFilm(filmUrl) {
   }
 }
 
-// استخراج كل الفيديوهات من صفحة الفئة
+// استخراج كل الفيديوهات من صفحة الفئة بشكل متوازي
 async function extractCategoryVideosFast() {
   const filmLinks = await extractFilmLinks(categoryUrl);
+
   const promises = filmLinks.map(async filmUrl => {
     const videoLink = await extractVideoFromFilm(filmUrl);
-    if (videoLinksCache[filmUrl] !== videoLink) {
+
+    // تحقق إذا الرابط تغير
+    const cached = videoLinksCache[filmUrl];
+    if (cached !== videoLink) {
       videoLinksCache[filmUrl] = videoLink;
       bot.sendMessage(CHAT_ID, `🎬 الرابط الجديد:\n${filmUrl}\n▶️ ${videoLink}`);
     }
+
     return { filmUrl, videoLink };
   });
+
   return Promise.all(promises);
 }
 
+// تحديث دوري كل 10 دقائق
 setInterval(extractCategoryVideosFast, 10 * 60 * 1000);
-extractCategoryVideosFast();
+extractCategoryVideosFast(); // التشغيل أول مرة عند بدء السيرفر
 
 // بوت تيليجرام /start
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   bot.sendMessage(chatId, "✅ جاري إرسال روابط الفيديو الحالية...");
+
   for (const [filmUrl, videoLink] of Object.entries(videoLinksCache)) {
     bot.sendMessage(chatId, `🎬 الصفحة: ${filmUrl}\n▶️ الرابط: ${videoLink}`);
   }
 });
 
+// Endpoint للتأكد من تشغيل السيرفر
 app.get('/', (req, res) => {
   res.send('✅ السيرفر والبوت شغالين بنجاح!');
 });
 
+// Endpoint لإرجاع روابط الفيديوهات بصيغة JSON
 app.get('/videos', async (req, res) => {
   res.json(videoLinksCache);
 });
