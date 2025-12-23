@@ -18,68 +18,101 @@ if (!TOKEN || !CHAT_ID) {
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// جميع روابط الصفحات من الاستضافات
-const videoPages = [
-  "https://hglink.to/e/386i5xkxrtsh",
-  "https://filemoon.sx/e/raurvwi75wym",
-  "https://minochinos.com/v/wyrmhk6mxbwe",
-  "https://mxdrop.to/e/36qmlomvfg8ddg",
-  "https://dsvplay.com/e/unq1qpbmeegl",
-  "https://forafile.com/embed-gecqil9kpayt.html",
-  "https://forafile.com/gecqil9kpayt/One.Punch.Man.S03E11.EgyDead.CoM.mp4.html"
-];
+// URL صفحة الفئة التي تريد استخراجها
+const categoryUrl = "https://egydead.media/category/افلام-كرتون/?page=2";
 
-// دالة استخراج روابط الفيديو الحقيقية
-async function extractVideo(url) {
+// تخزين روابط الفيديو الحالية
+let videoLinksCache = {};
+
+// دالة استخراج روابط صفحات الأفلام من صفحة الفئة
+async function extractFilmLinks(pageUrl) {
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
+  });
+  const page = await browser.newPage();
+  await page.goto(pageUrl, { waitUntil: "networkidle2" });
+
+  const links = await page.evaluate(() => {
+    const anchors = Array.from(document.querySelectorAll("a"));
+    return anchors
+      .map(a => a.href)
+      .filter(href => href.includes("/movies/") || href.includes("/films/"));
+  });
+
+  await browser.close();
+  return [...new Set(links)];
+}
+
+// دالة استخراج رابط الفيديو الحقيقي من صفحة فيلم
+async function extractVideoFromFilm(filmUrl) {
   try {
     const browser = await puppeteer.launch({
       headless: "new",
       args: ["--no-sandbox", "--disable-setuid-sandbox"]
     });
     const page = await browser.newPage();
-    await page.goto(url, { waitUntil: "networkidle2" });
+    await page.goto(filmUrl, { waitUntil: "networkidle2" });
 
-    const video = await page.evaluate(() => {
-      const v = document.querySelector("video source");
-      if (v) return v.src;
+    const videoLink = await page.evaluate(() => {
+      const iframe = document.querySelector("iframe[src]");
+      if (iframe) return iframe.src;
 
-      const found = performance.getEntries()
-        .map(e => e.name)
-        .find(u => u.includes(".m3u8") || u.includes(".mp4"));
-      return found || null;
+      const source = document.querySelector("video source");
+      if (source) return source.src;
+
+      return null;
     });
 
     await browser.close();
-    return video || "رابط الفيديو غير موجود";
-  } catch (e) {
-    return "خطأ: " + e.toString();
+    return videoLink || "رابط الفيديو غير موجود";
+  } catch (err) {
+    return "خطأ: " + err.toString();
   }
 }
 
-// عند الضغط على /start في البوت
+// استخراج كل الفيديوهات من صفحة الفئة بشكل متوازي
+async function extractCategoryVideosFast() {
+  const filmLinks = await extractFilmLinks(categoryUrl);
+
+  const promises = filmLinks.map(async filmUrl => {
+    const videoLink = await extractVideoFromFilm(filmUrl);
+
+    // تحقق إذا الرابط تغير
+    const cached = videoLinksCache[filmUrl];
+    if (cached !== videoLink) {
+      videoLinksCache[filmUrl] = videoLink;
+      bot.sendMessage(CHAT_ID, `🎬 الرابط الجديد:\n${filmUrl}\n▶️ ${videoLink}`);
+    }
+
+    return { filmUrl, videoLink };
+  });
+
+  return Promise.all(promises);
+}
+
+// تحديث دوري كل 10 دقائق
+setInterval(extractCategoryVideosFast, 10 * 60 * 1000);
+extractCategoryVideosFast(); // التشغيل أول مرة عند بدء السيرفر
+
+// بوت تيليجرام /start
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  bot.sendMessage(chatId, "✅ جاري استخراج روابط الفيديوهات...");
+  bot.sendMessage(chatId, "✅ جاري إرسال روابط الفيديو الحالية...");
 
-  for (const url of videoPages) {
-    const videoLink = await extractVideo(url);
-    bot.sendMessage(chatId, `🎬 الصفحة: ${url}\n▶️ الرابط: ${videoLink}`);
+  for (const [filmUrl, videoLink] of Object.entries(videoLinksCache)) {
+    bot.sendMessage(chatId, `🎬 الصفحة: ${filmUrl}\n▶️ الرابط: ${videoLink}`);
   }
 });
 
-// Endpoint للتأكد أن السيرفر شغال
+// Endpoint للتأكد من تشغيل السيرفر
 app.get('/', (req, res) => {
-  res.send('تم تشغيل السيرفر والبوت بنجاح!');
+  res.send('✅ السيرفر والبوت شغالين بنجاح!');
 });
 
 // Endpoint لإرجاع روابط الفيديوهات بصيغة JSON
 app.get('/videos', async (req, res) => {
-  const results = [];
-  for (const url of videoPages) {
-    const link = await extractVideo(url);
-    results.push({ page: url, video: link });
-  }
-  res.json(results);
+  res.json(videoLinksCache);
 });
 
 app.listen(port, () => {
