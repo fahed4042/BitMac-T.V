@@ -6,8 +6,15 @@ const app = express();
 app.use(express.json());
 
 const port = process.env.PORT || 3000;
-const TOKEN = process.env.TELEGRAM_TOKEN; // توكن البوت
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID; // ID حسابك
+
+// 🔹 ضع التوكن ورقم الحساب هنا مباشرة
+const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw"; // توكن البوت
+const CHAT_ID = "1544455907"; // رقم حسابك
+
+if (!TOKEN || !CHAT_ID) {
+  console.error("❌ لم يتم توفير رمز بوت تيليجرام أو Chat ID!");
+  process.exit(1);
+}
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
@@ -52,11 +59,11 @@ async function extractVideo(url) {
 // عند الضغط على /start في البوت
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  bot.sendMessage(chatId, "جارٍ استخراج روابط الفيديوهات...");
+  bot.sendMessage(chatId, "✅ جاري استخراج روابط الفيديوهات...");
 
   for (const url of videoPages) {
     const videoLink = await extractVideo(url);
-    bot.sendMessage(chatId, videoLink);
+    bot.sendMessage(chatId, `🎬 الصفحة: ${url}\n▶️ الرابط: ${videoLink}`);
   }
 });
 
@@ -76,5 +83,5 @@ app.get('/videos', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+  console.log(`Server BitMac-TV يعمل على المنفذ ${port}`);
 });
