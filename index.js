@@ -1,12 +1,12 @@
 const express = require('express');
-const puppeteer = require('puppeteer'); // تأكد أنك تستخدم puppeteer العادي
+const { chromium } = require('playwright'); // نستخدم Playwright بدل Puppeteer
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw"; 
+const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw";
 const CHAT_ID = "1544455907";
 
 const bot = new TelegramBot(TOKEN, { polling: true });
@@ -17,15 +17,12 @@ const pageUrl = "https://egydead.media/category/افلام-كرتون/?page=2";
 // دالة استخراج روابط الفيديو
 async function extractVideoLinks(url) {
   try {
-    const browser = await puppeteer.launch({
-      headless: true, 
-      args: ["--no-sandbox", "--disable-setuid-sandbox"]
-    });
+    const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
-    await page.goto(url, { waitUntil: 'networkidle2' });
+    await page.goto(url, { waitUntil: 'networkidle' });
 
+    // اجلب كل الروابط في الصفحة التي تحتوي على الأفلام
     const links = await page.evaluate(() => {
-      // اجلب كل الروابط في الصفحة
       const anchors = Array.from(document.querySelectorAll("a"));
       return anchors
         .map(a => a.href)
@@ -33,7 +30,7 @@ async function extractVideoLinks(url) {
     });
 
     await browser.close();
-    return [...new Set(links)]; // حذف التكرارات
+    return [...new Set(links)]; // إزالة التكرارات
   } catch (err) {
     return ["خطأ: " + err.toString()];
   }
