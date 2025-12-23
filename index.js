@@ -1,5 +1,5 @@
 const express = require('express');
-const { chromium } = require('playwright'); // Playwright مع Chromium مضمن
+const puppeteer = require('puppeteer'); // استخدام Puppeteer العادي
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
@@ -16,35 +16,33 @@ const pageUrl = "https://egydead.media/category/افلام-كرتون/?page=2";
 
 // دالة استخراج روابط الفيديو
 async function extractVideoLinks(url) {
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-  await page.goto(url, { waitUntil: 'networkidle' });
+  try {
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"]
+    });
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: 'networkidle2' });
 
-  const links = await page.evaluate(() => {
-    const anchors = Array.from(document.querySelectorAll("a"));
-    return anchors
-      .map(a => a.href)
-      .filter(href => href.includes("/movies/") || href.includes("/films/"));
-  });
+    const links = await page.evaluate(() => {
+      const anchors = Array.from(document.querySelectorAll("a"));
+      return anchors
+        .map(a => a.href)
+        .filter(href => href.includes("/movies/") || href.includes("/films/"));
+    });
 
-  await browser.close();
-  return [...new Set(links)];
+    await browser.close();
+    return [...new Set(links)];
+  } catch (err) {
+    return ["⚠️ حدث خطأ: " + err.toString()];
+  }
 }
 
 // دالة إرسال الروابط للبوت مباشرة
 async function sendLinksToBot() {
-  try {
-    const links = await extractVideoLinks(pageUrl);
-    if (!links.length) {
-      bot.sendMessage(CHAT_ID, "❌ لم يتم العثور على روابط فيديو.");
-      return;
-    }
-
-    for (const link of links) {
-      bot.sendMessage(CHAT_ID, `🎬 رابط فيلم: ${link}`);
-    }
-  } catch (err) {
-    bot.sendMessage(CHAT_ID, `⚠️ حدث خطأ: ${err.toString()}`);
+  const links = await extractVideoLinks(pageUrl);
+  for (const link of links) {
+    bot.sendMessage(CHAT_ID, `🎬 رابط فيلم: ${link}`);
   }
 }
 
