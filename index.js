@@ -1,120 +1,67 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer'); // تأكد أنك تستخدم puppeteer العادي
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 app.use(express.json());
 
-const port = process.env.PORT || 3000;
-
-// 🔹 ضع التوكن ورقم الحساب هنا مباشرة
-const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw";
+const PORT = process.env.PORT || 3000;
+const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw"; 
 const CHAT_ID = "1544455907";
-
-if (!TOKEN || !CHAT_ID) {
-  console.error("❌ لم يتم توفير رمز بوت تيليجرام أو Chat ID!");
-  process.exit(1);
-}
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 
-// رابط صفحة الفئة
-const categoryUrl = "https://egydead.media/category/افلام-كرتون/?page=2";
+// رابط الصفحة التي تريد استخراج الفيديوهات منها
+const pageUrl = "https://egydead.media/category/افلام-كرتون/?page=2";
 
-// تخزين روابط الفيديو الحالية
-let videoLinksCache = {};
-
-// دالة استخراج روابط صفحات الأفلام من صفحة الفئة
-async function extractFilmLinks(pageUrl) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"]
-  });
-  const page = await browser.newPage();
-  await page.goto(pageUrl, { waitUntil: "networkidle2" });
-
-  const links = await page.evaluate(() => {
-    const anchors = Array.from(document.querySelectorAll("a"));
-    return anchors
-      .map(a => a.href)
-      .filter(href => href.includes("/movies/") || href.includes("/films/"));
-  });
-
-  await browser.close();
-  return [...new Set(links)];
-}
-
-// دالة استخراج رابط الفيديو الحقيقي من صفحة فيلم
-async function extractVideoFromFilm(filmUrl) {
+// دالة استخراج روابط الفيديو
+async function extractVideoLinks(url) {
   try {
     const browser = await puppeteer.launch({
-      headless: true,
+      headless: true, 
       args: ["--no-sandbox", "--disable-setuid-sandbox"]
     });
     const page = await browser.newPage();
-    await page.goto(filmUrl, { waitUntil: "networkidle2" });
+    await page.goto(url, { waitUntil: 'networkidle2' });
 
-    const videoLink = await page.evaluate(() => {
-      const iframe = document.querySelector("iframe[src]");
-      if (iframe) return iframe.src;
-
-      const source = document.querySelector("video source");
-      if (source) return source.src;
-
-      return null;
+    const links = await page.evaluate(() => {
+      // اجلب كل الروابط في الصفحة
+      const anchors = Array.from(document.querySelectorAll("a"));
+      return anchors
+        .map(a => a.href)
+        .filter(href => href.includes("/movies/") || href.includes("/films/"));
     });
 
     await browser.close();
-    return videoLink || "رابط الفيديو غير موجود";
+    return [...new Set(links)]; // حذف التكرارات
   } catch (err) {
-    return "خطأ: " + err.toString();
+    return ["خطأ: " + err.toString()];
   }
 }
 
-// استخراج كل الفيديوهات من صفحة الفئة بشكل متوازي
-async function extractCategoryVideosFast() {
-  const filmLinks = await extractFilmLinks(categoryUrl);
-
-  const promises = filmLinks.map(async filmUrl => {
-    const videoLink = await extractVideoFromFilm(filmUrl);
-
-    // تحقق إذا الرابط تغير
-    const cached = videoLinksCache[filmUrl];
-    if (cached !== videoLink) {
-      videoLinksCache[filmUrl] = videoLink;
-      bot.sendMessage(CHAT_ID, `🎬 الرابط الجديد:\n${filmUrl}\n▶️ ${videoLink}`);
-    }
-
-    return { filmUrl, videoLink };
-  });
-
-  return Promise.all(promises);
+// دالة إرسال الروابط للبوت مباشرة
+async function sendLinksToBot() {
+  const links = await extractVideoLinks(pageUrl);
+  for (const link of links) {
+    bot.sendMessage(CHAT_ID, `🎬 رابط فيلم: ${link}`);
+  }
 }
 
-// تحديث دوري كل 10 دقائق
-setInterval(extractCategoryVideosFast, 10 * 60 * 1000);
-extractCategoryVideosFast(); // التشغيل أول مرة عند بدء السيرفر
+// تحديث تلقائي كل 10 دقائق
+setInterval(sendLinksToBot, 10 * 60 * 1000);
+sendLinksToBot(); // التشغيل أول مرة
 
 // بوت تيليجرام /start
 bot.onText(/\/start/, async (msg) => {
-  const chatId = msg.chat.id;
-  bot.sendMessage(chatId, "✅ جاري إرسال روابط الفيديو الحالية...");
-
-  for (const [filmUrl, videoLink] of Object.entries(videoLinksCache)) {
-    bot.sendMessage(chatId, `🎬 الصفحة: ${filmUrl}\n▶️ الرابط: ${videoLink}`);
-  }
+  bot.sendMessage(msg.chat.id, "✅ جاري إرسال روابط الفيديو الحالية...");
+  await sendLinksToBot();
 });
 
-// Endpoint للتأكد من تشغيل السيرفر
+// Endpoint للتأكد من أن السيرفر شغال
 app.get('/', (req, res) => {
   res.send('✅ السيرفر والبوت شغالين بنجاح!');
 });
 
-// Endpoint لإرجاع روابط الفيديوهات بصيغة JSON
-app.get('/videos', async (req, res) => {
-  res.json(videoLinksCache);
-});
-
-app.listen(port, () => {
-  console.log(`Server BitMac-TV يعمل على المنفذ ${port}`);
+app.listen(PORT, () => {
+  console.log(`Server BitMac-TV يعمل على المنفذ ${PORT}`);
 });
