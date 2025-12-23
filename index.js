@@ -1,5 +1,5 @@
 const express = require('express');
-const { chromium } = require('playwright');
+const { chromium } = require('playwright'); // Playwright مع Chromium مضمن
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
@@ -33,9 +33,18 @@ async function extractVideoLinks(url) {
 
 // دالة إرسال الروابط للبوت مباشرة
 async function sendLinksToBot() {
-  const links = await extractVideoLinks(pageUrl);
-  for (const link of links) {
-    bot.sendMessage(CHAT_ID, `🎬 رابط فيلم: ${link}`);
+  try {
+    const links = await extractVideoLinks(pageUrl);
+    if (!links.length) {
+      bot.sendMessage(CHAT_ID, "❌ لم يتم العثور على روابط فيديو.");
+      return;
+    }
+
+    for (const link of links) {
+      bot.sendMessage(CHAT_ID, `🎬 رابط فيلم: ${link}`);
+    }
+  } catch (err) {
+    bot.sendMessage(CHAT_ID, `⚠️ حدث خطأ: ${err.toString()}`);
   }
 }
 
