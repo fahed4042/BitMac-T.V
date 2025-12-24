@@ -1,69 +1,29 @@
 
 const express = require('express');
-const TelegramBot = require('node-telegram-bot-api');
-
+const axios = require('axios'); // لجلب صفحات السيرفرات واستخرج روابط الفيديو
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
-const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw";
-const CHAT_ID = "1544455907";
 
-// ❌ بدون polling (لتجنب 409)
-const bot = new TelegramBot(TOKEN, { polling: false });
+// Endpoint يعطي رابط MP4 مباشرة
+app.get('/get-video', async (req, res) => {
+    const videoId = req.query.id; // تمرر id الفيديو
+    try {
+        // مثال: جلب الصفحة من سيرفر MultiEmbed أو أي سيرفر آخر
+        const pageUrl = `https://multiembed.mov/?video_id=${videoId}`;
+        const response = await axios.get(pageUrl);
 
-/* =========================
-   🔹 توليد روابط vidsrc
-========================= */
-
-// فيلم
-function movieLink(movieId) {
-  return `https://vidsrc.to/embed/movie/${movieId}`;
-}
-
-// مسلسل
-function tvLink(tvId, season, episode) {
-  return `https://vidsrc.to/embed/tv/${tvId}/${season}/${episode}`;
-}
-
-/* =========================
-   🔹 أمثلة إرسال
-========================= */
-
-async function sendExamples() {
-  // مثال فيلم
-  const movie = movieLink(550); // Fight Club
-  await bot.sendMessage(CHAT_ID, `🎬 فيلم:\n${movie}`);
-
-  // مثال مسلسل
-  const tv = tvLink(1399, 1, 1); // Game of Thrones S01E01
-  await bot.sendMessage(CHAT_ID, `📺 مسلسل:\n${tv}`);
-}
-
-// إرسال مرة عند التشغيل
-sendExamples();
-
-/* =========================
-   🔹 API لتطبيقك (Sketchware)
-========================= */
-
-// فيلم
-app.get('/movie/:id', (req, res) => {
-  const url = movieLink(req.params.id);
-  res.json({ server: "VIDSRC", url });
+        // البحث عن رابط MP4 في الصفحة
+        const matches = response.data.match(/https?:\/\/.*\.mp4/g);
+        if (matches && matches.length > 0) {
+            return res.send(matches[0]); // نرسل أول رابط MP4
+        } else {
+            return res.status(404).send("رابط MP4 غير موجود");
+        }
+    } catch (err) {
+        return res.status(500).send("خطأ في السيرفر: " + err.toString());
+    }
 });
 
-// مسلسل
-app.get('/tv/:id/:season/:episode', (req, res) => {
-  const { id, season, episode } = req.params;
-  const url = tvLink(id, season, episode);
-  res.json({ server: "VIDSRC", url });
-});
-
-app.get('/', (req, res) => {
-  res.send('✅ BitMac-TV يعمل – VIDSRC Generator');
-});
-
-app.listen(PORT, () => {
-  console.log(`Server BitMac-TV يعمل على ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
