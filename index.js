@@ -1,6 +1,5 @@
+
 const express = require('express');
-const axios = require('axios');
-const cheerio = require('cheerio');
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
@@ -10,75 +9,59 @@ const PORT = process.env.PORT || 10000;
 const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw";
 const CHAT_ID = "1544455907";
 
-// ❗ بدون polling لتفادي خطأ 409
+// ❌ بدون polling (لتجنب 409)
 const bot = new TelegramBot(TOKEN, { polling: false });
 
-// صفحة الفئة
-const CATEGORY_URL = "https://egydead.media/category/افلام-كرتون/?page=2";
+/* =========================
+   🔹 توليد روابط vidsrc
+========================= */
 
-// كاش لمنع التكرار
-let sentLinks = new Set();
-
-/**
- * استخراج روابط الفيديو (mp4 / m3u8 / iframe)
- */
-async function extractVideoLinks() {
-  const res = await axios.get(CATEGORY_URL, {
-    headers: { "User-Agent": "Mozilla/5.0" }
-  });
-
-  const $ = cheerio.load(res.data);
-  let results = [];
-
-  // روابط iframes
-  $('iframe').each((i, el) => {
-    const src = $(el).attr('src');
-    if (src) results.push(src);
-  });
-
-  // روابط mp4 و m3u8
-  $('a').each((i, el) => {
-    const href = $(el).attr('href');
-    if (
-      href &&
-      (href.endsWith('.mp4') ||
-       href.endsWith('.m3u8'))
-    ) {
-      results.push(href);
-    }
-  });
-
-  return [...new Set(results)];
+// فيلم
+function movieLink(movieId) {
+  return `https://vidsrc.to/embed/movie/${movieId}`;
 }
 
-/**
- * إرسال الروابط كل دقيقة
- */
-async function sendLinksToTelegram() {
-  try {
-    const links = await extractVideoLinks();
-
-    for (const link of links) {
-      if (!sentLinks.has(link)) {
-        sentLinks.add(link);
-        await bot.sendMessage(
-          CHAT_ID,
-          `🎬 رابط فيديو:\n${link}`
-        );
-      }
-    }
-  } catch (err) {
-    console.log("⚠️ خطأ:", err.message);
-  }
+// مسلسل
+function tvLink(tvId, season, episode) {
+  return `https://vidsrc.to/embed/tv/${tvId}/${season}/${episode}`;
 }
 
-// تشغيل كل دقيقة
-setInterval(sendLinksToTelegram, 60 * 1000);
-sendLinksToTelegram();
+/* =========================
+   🔹 أمثلة إرسال
+========================= */
 
-// فحص السيرفر
+async function sendExamples() {
+  // مثال فيلم
+  const movie = movieLink(550); // Fight Club
+  await bot.sendMessage(CHAT_ID, `🎬 فيلم:\n${movie}`);
+
+  // مثال مسلسل
+  const tv = tvLink(1399, 1, 1); // Game of Thrones S01E01
+  await bot.sendMessage(CHAT_ID, `📺 مسلسل:\n${tv}`);
+}
+
+// إرسال مرة عند التشغيل
+sendExamples();
+
+/* =========================
+   🔹 API لتطبيقك (Sketchware)
+========================= */
+
+// فيلم
+app.get('/movie/:id', (req, res) => {
+  const url = movieLink(req.params.id);
+  res.json({ server: "VIDSRC", url });
+});
+
+// مسلسل
+app.get('/tv/:id/:season/:episode', (req, res) => {
+  const { id, season, episode } = req.params;
+  const url = tvLink(id, season, episode);
+  res.json({ server: "VIDSRC", url });
+});
+
 app.get('/', (req, res) => {
-  res.send('✅ BitMac-TV يعمل بدون Chrome وبدون أخطاء');
+  res.send('✅ BitMac-TV يعمل – VIDSRC Generator');
 });
 
 app.listen(PORT, () => {
