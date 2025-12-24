@@ -1,81 +1,98 @@
-
 const express = require('express');
-const { chromium } = require('playwright');
+const puppeteer = require('puppeteer');
 const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw"; 
+const TOKEN = "8291407370:AAGI87MoWKuZgHo-zspSPvd8up9IBmUxsxw";
 const CHAT_ID = "1544455907";
 
-const bot = new TelegramBot(TOKEN, { polling: false }); // Webhook بدون polling
+const bot = new TelegramBot(TOKEN, { polling: false });
 
-// رابط صفحة EGYDEAD التي تريد استخراج الفيديوهات منها
-const pageUrl = "https://egydead.media/category/افلام-كرتون/?page=2";
+// رابط التصنيف الأساسي
+const BASE_URL = "https://egydead.media/category/افلام-كرتون/?page=";
 
-// دالة استخراج روابط الفيديو المباشرة من الصفحات
-async function extractVideoLinks(url) {
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-  await page.goto(url, { waitUntil: 'networkidle' });
+let videoQueue = [];
+let sending = false;
 
-  // البحث عن روابط الفيديو داخل iframes أو ملفات الفيديو mp4
-  const links = await page.evaluate(() => {
-    const videoLinks = [];
-
-    // روابط mp4 مباشرة
-    document.querySelectorAll('video source').forEach(v => videoLinks.push(v.src));
-
-    // روابط iframe
-    document.querySelectorAll('iframe').forEach(f => {
-      if(f.src) videoLinks.push(f.src);
-    });
-
-    return [...new Set(videoLinks)]; // إزالة التكرارات
+/* =========================
+   استخراج روابط الفيديو من كل الصفحات
+========================= */
+async function collectAllVideoLinks() {
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"]
   });
 
+  const page = await browser.newPage();
+  let pageNum = 1;
+  let allLinks = new Set();
+
+  while (true) {
+    const url = BASE_URL + pageNum;
+    console.log("🔍 فحص الصفحة:", url);
+
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 0 });
+
+    const links = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll("a"))
+        .map(a => a.href)
+        .filter(h =>
+          h.includes(".mp4") ||
+          h.includes(".m3u8")
+        );
+    });
+
+    if (links.length === 0) {
+      break; // ما في روابط = خلصت الصفحات
+    }
+
+    links.forEach(l => allLinks.add(l));
+    pageNum++;
+  }
+
   await browser.close();
-  return links;
+  return Array.from(allLinks);
 }
 
-// إرسال روابط الفيديو للبوت
-async function sendLinksToBot() {
-  try {
-    const links = await extractVideoLinks(pageUrl);
-    if (links.length === 0) {
-      bot.sendMessage(CHAT_ID, "❌ لم يتم العثور على أي روابط فيديو.");
+/* =========================
+   إرسال رابط واحد كل دقيقة
+========================= */
+async function startSending() {
+  if (sending || videoQueue.length === 0) return;
+  sending = true;
+
+  setInterval(async () => {
+    if (videoQueue.length === 0) {
+      sending = false;
       return;
     }
-    for (const link of links) {
-      bot.sendMessage(CHAT_ID, `🎬 رابط فيديو: ${link}`);
-    }
-  } catch (err) {
-    bot.sendMessage(CHAT_ID, `⚠️ حدث خطأ: ${err.message}`);
-  }
+
+    const link = videoQueue.shift();
+    await bot.sendMessage(CHAT_ID, `🎬 رابط فيديو:\n${link}`);
+  }, 60 * 1000); // دقيقة
 }
 
-// تحديث تلقائي كل 10 دقائق
-setInterval(sendLinksToBot, 10 * 60 * 1000);
-sendLinksToBot(); // التشغيل أول مرة عند بدء السيرفر
+/* =========================
+   تشغيل أول مرة
+========================= */
+(async () => {
+  try {
+    videoQueue = await collectAllVideoLinks();
+    console.log("✅ تم جمع", videoQueue.length, "روابط فيديو");
+    startSending();
+  } catch (e) {
+    bot.sendMessage(CHAT_ID, "⚠️ خطأ: " + e.message);
+  }
+})();
 
-// Webhook endpoint (Render يتعامل مع HTTPS)
-app.post(`/webhook/${TOKEN}`, (req, res) => {
-  const update = req.body;
-  bot.processUpdate(update);
-  res.sendStatus(200);
-});
-
-// /start Endpoint للبوت
-bot.onText(/\/start/, async (msg) => {
-  bot.sendMessage(msg.chat.id, "✅ جاري إرسال روابط الفيديو الحالية...");
-  await sendLinksToBot();
-});
-
-// Endpoint للتأكد من تشغيل السيرفر
+/* =========================
+   Endpoint فحص
+========================= */
 app.get('/', (req, res) => {
-  res.send('✅ السيرفر والبوت شغالين بنجاح!');
+  res.send('✅ BitMac‑TV شغال ويرسل رابط كل دقيقة');
 });
 
 app.listen(PORT, () => {
