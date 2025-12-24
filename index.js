@@ -1,14 +1,10 @@
-
 const express = require('express');
 const axios = require('axios');
 const app = express();
 
-app.use(express.json());
-
 const PORT = process.env.PORT || 10000;
 
-// قائمة الروابط الأساسية للسيرفرات
-const SERVER_URLS = {
+const SERVERS = {
     vsrc: "https://vidsrc.to/embed/movie/",
     vxyz: "https://vidsrc.xyz/embed/movie/",
     mapi: "https://moviesapi.club/movie/",
@@ -18,47 +14,37 @@ const SERVER_URLS = {
 };
 
 app.get('/get-video', async (req, res) => {
-    const videoId = req.query.id;
-    const server = req.query.server ? req.query.server.toLowerCase() : "vsrc";
+    const { id, server } = req.query;
+    const serverKey = server ? server.toLowerCase() : "vsrc";
+    const baseUrl = SERVERS[serverKey];
 
-    if (!videoId) {
-        return res.status(400).send("❌ يرجى إرسال ID الفيلم");
-    }
-
-    const baseUrl = SERVER_URLS[server];
-    if (!baseUrl) {
-        return res.status(400).send("❌ سيرفر غير معروف");
+    if (!id || !baseUrl) {
+        return res.status(400).send("❌ معرف الفيلم أو السيرفر غير صحيح");
     }
 
     try {
-        const pageUrl = `${baseUrl}${videoId}`;
-        
-        // إرسال Headers لتبدو كأنك متصفح حقيقي لتجنب الحظر
-        const response = await axios.get(pageUrl, {
-            timeout: 15000,
+        const targetUrl = `${baseUrl}${id}`;
+        const response = await axios.get(targetUrl, {
+            timeout: 10000,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-                'Referer': pageUrl
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://vidsrc.to/'
             }
         });
 
-        // البحث عن روابط MP4 أو M3U8 (أكثر استقراراً للبث)
-        const regex = /https?:\/\/[^'"]+\.(mp4|m3u8)[^'"]*/g;
-        const matches = response.data.match(regex);
+        // البحث عن روابط الفيديو (MP4 أو M3U8)
+        const videoRegex = /https?:\/\/[^'"]+\.(mp4|m3u8)[^'"]*/g;
+        const matches = response.data.match(videoRegex);
 
-        if (matches && matches.length > 0) {
-            // إرسال أول رابط يتم العثور عليه
-            return res.send(matches[0]);
+        if (matches) {
+            res.send(matches[0]);
         } else {
-            // في حال لم يجد رابط مباشر، نرسل رابط الصفحة الأصلي كحل احتياطي
-            // لأن بعض المشغلات تحتاج iframe وليس رابط مباشر
-            return res.status(404).send("❌ لم يتم العثور على رابط مباشر، السيرفر قد يكون محمي");
+            res.status(404).send("❌ لم يتم العثور على رابط مباشر");
         }
-
-    } catch (err) {
-        console.error(err.message);
-        return res.status(500).send("⚠️ خطأ في السيرفر: " + err.message);
+    } catch (error) {
+        res.status(500).send("⚠️ خطأ في جلب البيانات: " + error.message);
     }
 });
 
-app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
