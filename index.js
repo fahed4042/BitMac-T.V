@@ -1,9 +1,14 @@
 const express = require('express');
 const axios = require('axios');
-const cors = require('cors');
 const app = express();
 
-app.use(cors());
+// بديل لمكتبة cors لمنع الأخطاء
+app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+    next();
+});
+
 app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
@@ -31,12 +36,10 @@ app.get('/get-video', async (req, res) => {
         const response = await axios.get(targetUrl, {
             timeout: 15000,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': targetUrl
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
         });
 
-        // استخراج روابط الفيديو (يدعم MP4 و M3U8)
         const videoRegex = /https?:\/\/[^'"]+\.(mp4|m3u8|mkv)[^'"]*/g;
         const matches = response.data.match(videoRegex);
 
@@ -46,9 +49,9 @@ app.get('/get-video', async (req, res) => {
             res.status(404).send("error: video link not found");
         }
     } catch (error) {
-        res.status(500).send("error: server error - " + error.message);
+        res.status(500).send("error: server error");
     }
 });
 
-app.listen(PORT, () => console.log(`BitMac-T.V Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
