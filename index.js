@@ -1,6 +1,10 @@
 const express = require('express');
 const axios = require('axios');
+const cors = require('cors');
 const app = express();
+
+app.use(cors());
+app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
@@ -19,32 +23,32 @@ app.get('/get-video', async (req, res) => {
     const baseUrl = SERVERS[serverKey];
 
     if (!id || !baseUrl) {
-        return res.status(400).send("❌ معرف الفيلم أو السيرفر غير صحيح");
+        return res.status(400).send("error: missing parameters");
     }
 
     try {
         const targetUrl = `${baseUrl}${id}`;
         const response = await axios.get(targetUrl, {
-            timeout: 10000,
+            timeout: 15000,
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://vidsrc.to/'
+                'Referer': targetUrl
             }
         });
 
-        // البحث عن روابط الفيديو (MP4 أو M3U8)
-        const videoRegex = /https?:\/\/[^'"]+\.(mp4|m3u8)[^'"]*/g;
+        // استخراج روابط الفيديو (يدعم MP4 و M3U8)
+        const videoRegex = /https?:\/\/[^'"]+\.(mp4|m3u8|mkv)[^'"]*/g;
         const matches = response.data.match(videoRegex);
 
-        if (matches) {
-            res.send(matches[0]);
+        if (matches && matches.length > 0) {
+            res.status(200).send(matches[0]);
         } else {
-            res.status(404).send("❌ لم يتم العثور على رابط مباشر");
+            res.status(404).send("error: video link not found");
         }
     } catch (error) {
-        res.status(500).send("⚠️ خطأ في جلب البيانات: " + error.message);
+        res.status(500).send("error: server error - " + error.message);
     }
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`BitMac-T.V Server running on port ${PORT}`));
 
