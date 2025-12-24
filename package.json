@@ -1,5 +1,5 @@
 {
-  "name": "BitMac-T.V",
+  "name": "bitmac-tv",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
@@ -10,3 +10,4 @@
     "axios": "^1.7.0"
   }
 }
+
