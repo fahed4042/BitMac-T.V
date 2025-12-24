@@ -1,4 +1,3 @@
-
 const express = require('express');
 const axios = require('axios');
 const app = express();
@@ -23,37 +22,38 @@ app.get('/get-video', async (req, res) => {
     const serverKey = server ? server.toLowerCase() : "vsrc";
     const baseUrl = SERVERS[serverKey];
 
-    if (!id || !baseUrl) return res.status(400).send("No ID");
+    if (!id || !baseUrl) return res.status(400).send("Missing ID or Server");
 
     try {
         const targetUrl = `${baseUrl}${id}`;
         
-        // محاولة جلب الصفحة مع Headers متقدمة
         const response = await axios.get(targetUrl, {
-            timeout: 10000,
+            timeout: 15000, // زيادة وقت الانتظار لتجنب خطأ 500 في الاتصالات البطيئة
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://vidsrc.to/',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+                'Referer': baseUrl,
+                'Accept-Language': 'en-US,en;q=0.9'
             }
         });
 
-        // Regex متطور للبحث عن ملفات البث المباشرة (m3u8) أو الفيديو (mp4)
-        // يبحث عن الروابط حتى لو كانت داخل Script أو Json
+        // Regex محسّن لصيد الروابط المباشرة حتى لو كانت داخل ملفات JS
         const regex = /(https?:\/\/[^"']+\.(?:m3u8|mp4|mkv)(?:\?[^"']*)?)/g;
-        const matches = response.data.match(regex);
+        let matches = response.data.match(regex);
 
         if (matches && matches.length > 0) {
-            // تنظيف الرابط من أي رموز زائدة
+            // تنظيف الرابط وإزالة الهروب (Backslashes)
             let finalLink = matches[0].replace(/\\/g, ""); 
             res.status(200).send(finalLink);
         } else {
-            // إذا فشل، نحاول البحث عن روابط مشفرة شائعة في vidsrc
-            res.status(404).send("Error: Link Encrypted or Not Found");
+            // محاكاة استخراج بديلة لبعض السيرفرات التي تشفر الروابط
+            res.status(404).send("Link Not Found - Might be encrypted");
         }
     } catch (error) {
-        res.status(500).send("Server Error");
+        console.error("Error fetching video:", error.message);
+        res.status(500).send("Server Busy or Proxy Error");
     }
 });
 
-app.listen(process.env.PORT || 10000);
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
