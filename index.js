@@ -1,5 +1,6 @@
+
 const express = require('express');
-const puppeteer = require('puppeteer');
+const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
@@ -7,53 +8,39 @@ app.get('/', async (req, res) => {
     const targetUrl = req.query.url;
 
     if (!targetUrl) {
-        return res.status(200).json({ 
+        return res.json({ 
             status: "success", 
-            message: "السيرفر يعمل بنجاح! يرجى إضافة رابط الفيلم هكذا: /?url=رابط_أكوام" 
+            message: "السيرفر يعمل! أضف ?url=رابط_أكوام" 
         });
     }
 
-    let browser;
     try {
-        // تم تعديل هذا الجزء ليعمل تلقائياً على سيرفر Render
-        browser = await puppeteer.launch({
-            headless: "new",
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--single-process'
-            ]
+        // جلب محتوى الصفحة مباشرة بدون متصفح ثقيل
+        const response = await axios.get(targetUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/119.0.0.0 Safari/537.36'
+            },
+            timeout: 10000
         });
 
-        const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/119.0.0.0 Safari/537.36');
-        
-        // محاولة الدخول للرابط مع مهلة دقيقة كاملة
-        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        const html = response.data;
+        const results = [];
 
-        const links = await page.evaluate(() => {
-            const results = [];
-            const elements = document.querySelectorAll('a, source, video, button, [data-link]');
-            elements.forEach(el => {
-                const link = el.href || el.src || el.getAttribute('data-link') || el.getAttribute('data-src');
-                if (link && (link.includes('.mp4') || link.includes('.m3u8') || link.includes('download'))) {
-                    results.push(link);
-                }
-            });
-            return [...new Set(results)]; 
+        // بحث عن روابط mp4 و m3u8 و download داخل الكود المصدري
+        const regex = /(https?:\/\/[^"'\s]+\.(?:mp4|m3u8|zip|rar|download)[^"'\s]*)/gi;
+        let match;
+        while ((match = regex.exec(html)) !== null) {
+            results.push(match[1]);
+        }
+
+        res.json({ 
+            status: "success", 
+            results: [...new Set(results)] 
         });
-
-        await browser.close();
-        res.json({ status: "success", results: links });
 
     } catch (error) {
-        if (browser) await browser.close();
         res.status(500).json({ status: "error", message: error.message });
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is live on port ${PORT}`);
-});
-
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
