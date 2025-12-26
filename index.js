@@ -1,43 +1,60 @@
-
 const express = require('express');
 const puppeteer = require('puppeteer');
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000; // تم التعديل ليتوافق مع بورت Render الافتراضي
 
-app.get('/api/extract', async (req, res) => {
+// تم تغيير المسار من '/api/extract' إلى '/' لحل مشكلة "غير موجود"
+app.get('/', async (req, res) => {
     const targetUrl = req.query.url;
 
     if (!targetUrl) {
-        return res.status(400).json({ status: "error", message: "يرجى إضافة رابط بعد ?url=" });
+        return res.status(400).json({ 
+            status: "error", 
+            message: "السيرفر يعمل! يرجى إضافة رابط الفيلم هكذا: /?url=رابط_أكوام" 
+        });
     }
 
     let browser;
     try {
-        // تشغيل المتصفح بإعدادات مخصصة للسيرفرات المجانية لضمان عدم استهلاك الذاكرة
         browser = await puppeteer.launch({
+            headless: "new",
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage'
+                '--disable-dev-shm-usage',
+                '--single-process' // لتقليل استهلاك الذاكرة في الخطة المجانية
             ],
-            // المسار الافتراضي للمتصفح على سيرفرات Render
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
         });
 
         const page = await browser.newPage();
         
-        // محاكاة متصفح هاتف ذكي لتجاوز حمايات المواقع بسهولة
-        await page.setUserAgent('Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36');
+        // إعدادات لتجاوز حماية البوتات
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
 
-        // التوجه للرابط والانتظار حتى يستقر الاتصال
-        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+        // الذهاب للرابط
+        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
-        // استخراج جميع روابط MP4 و m3u8 و mkv الموجودة في الكود
+        // محاولة النقر على أزرار التحميل إذا كانت مخفية (خاص بأكوام)
         const links = await page.evaluate(() => {
-            const videoRegex = /https?:\/\/[^"']+\.(mp4|m3u8|mkv)/g;
-            const htmlContent = document.documentElement.innerHTML;
-            const matches = htmlContent.match(videoRegex) || [];
-            return [...new Set(matches)]; // إزالة الروابط المتكررة
+            const results = [];
+            // البحث عن روابط الفيديو في كل مكان (src, href, data-src)
+            const elements = document.querySelectorAll('a, source, video, button, [data-link]');
+            
+            elements.forEach(el => {
+                const link = el.href || el.src || el.getAttribute('data-link') || el.getAttribute('data-src');
+                if (link && (link.includes('.mp4') || link.includes('.m3u8') || link.includes('download'))) {
+                    results.push(link);
+                }
+            });
+
+            // بحث إضافي داخل كود الصفحة (Regex) لضمان عدم ضياع أي رابط
+            const bodyText = document.body.innerHTML;
+            const regex = /https?:\/\/[^"']+\.(mp4|m3u8)/g;
+            const matches = bodyText.match(regex);
+            if (matches) results.push(...matches);
+
+            return [...new Set(results)]; 
         });
 
         await browser.close();
@@ -57,3 +74,4 @@ app.get('/api/extract', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server bitmac-tv is live on port ${PORT}`);
 });
+
