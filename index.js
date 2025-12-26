@@ -3,7 +3,6 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// رؤوس الطلب لمحاكاة المتصفح وتجنب الحماية
 const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Referer': 'https://a.asd.homes/',
@@ -11,44 +10,46 @@ const headers = {
 };
 
 app.get('/', async (req, res) => {
-    const movieName = req.query.search;
+    let movieName = req.query.search;
 
     try {
-        if (!movieName) return res.send("سيرفر جرد عرب سيد يعمل بنجاح");
+        if (!movieName) return res.send("سيرفر Bitmac يعمل.. بانتظار البحث");
 
-        // 1. البحث في عرب سيد باستخدام نظام word=
-        const searchUrl = `https://a.asd.homes/find/?word=${encodeURIComponent(movieName)}&type=movie`;
+        // 🚀 تنظيف الاسم: إزالة الأقواس والسنة (مثلاً: "رهين (2025)" تصبح "رهين")
+        movieName = movieName.replace(/\s*\([^)]*\d{4}[^)]*\)/g, '').replace(/\s*\d{4}/g, '').trim();
+
+        // 1. إجراء البحث في عرب سيد
+        const searchUrl = `https://a.asd.homes/find/?word=${encodeURIComponent(movieName)}`;
         const searchRes = await axios.get(searchUrl, { headers });
         
-        // 2. صيد رابط صفحة الفيلم من نتائج البحث
-        // نبحث عن الروابط التي لا تحتوي على كلمة "find" وتؤدي للأفلام
+        // 2. صيد رابط الفيلم (نبحث عن أي رابط يؤدي لصفحة فيلم)
         const linkMatch = searchRes.data.match(/href="(https?:\/\/a\.asd\.homes\/[^"\/]+\/)"/i);
         
         if (linkMatch) {
-            let moviePageUrl = linkMatch[1];
+            let pageUrl = linkMatch[1].replace(/\\/g, '');
             
-            // 3. التوجه لصفحة المشاهدة مباشرة (إضافة /watch/ للرابط كما أرفقت أنت)
-            const watchPageUrl = moviePageUrl + "watch/";
-            
-            const watchResponse = await axios.get(watchPageUrl, { headers, timeout: 15000 });
+            // إضافة /watch/ لضمان الدخول لصفحة المشغل مباشرة
+            if (!pageUrl.endsWith('/watch/')) {
+                pageUrl = pageUrl.endsWith('/') ? pageUrl + "watch/" : pageUrl + "/watch/";
+            }
+
+            // 3. جرد روابط الفيديو من صفحة المشاهدة
+            const watchResponse = await axios.get(pageUrl, { headers, timeout: 15000 });
             const html = watchResponse.data;
             
-            // 4. جرد روابط الفيديو المباشرة (mp4, m3u8)
+            // صيد كل ما هو mp4 أو m3u8 أو حتى روابط الـ iframe
             const videoRegex = /(https?:\/\/[^"'\s]+\.(?:mp4|m3u8|mkv)[^"'\s]*)/gi;
             const rawLinks = html.match(videoRegex) || [];
             
-            // تنظيف الروابط من أي علامات مائلة خلفية
             const finalLinks = [...new Set(rawLinks.map(link => link.replace(/\\/g, '')))];
 
             res.json({ 
                 status: "success", 
-                data: {
-                    direct_links: finalLinks
-                },
-                source_page: watchPageUrl
+                data: { direct_links: finalLinks },
+                source_page: pageUrl
             });
         } else {
-            res.json({ status: "error", message: "لم يتم العثور على الفيلم في عرب سيد" });
+            res.json({ status: "error", message: "لم يتم العثور على الفيلم" });
         }
 
     } catch (error) {
@@ -56,5 +57,4 @@ app.get('/', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Arabseed Scraper Running on port ${PORT}`));
-
+app.listen(PORT, () => console.log(`Server is running for Arabseed`));
