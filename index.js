@@ -3,6 +3,7 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// رؤوس طلب احترافية لمنع الحظر
 const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Referer': 'https://ak.sv/',
@@ -15,7 +16,7 @@ app.get('/', async (req, res) => {
     if (!targetUrl) {
         return res.json({ 
             status: "success", 
-            message: "سيرفر السحب الشامل جاهز! استخدم ?url= وأضف رابط (فيلم، مسلسل، أو قسم)" 
+            message: "سيرفر الجرد الشامل يعمل! جرب وضع رابط قسم الأفلام أو رابط بحث." 
         });
     }
 
@@ -23,41 +24,43 @@ app.get('/', async (req, res) => {
         const response = await axios.get(targetUrl, { headers, timeout: 15000 });
         const html = response.data;
         
-        // 1. استخراج روابط الفيديو المباشرة (mp4)
+        // 1. سحب روابط الفيديو المباشرة (mp4) - للأفلام والحلقات
         const videoRegex = /(https?:\/\/[^"'\s]+\.(?:mp4|m3u8|mkv)[^"'\s]*)/gi;
         const videoLinks = [...new Set(html.match(videoRegex) || [])];
 
-        // 2. استخراج روابط المشاهدة (Watch Links) - مفيد للمسلسلات والأقسام
+        // 2. سحب روابط "صفحات العروض" (الأفلام والمسلسلات الموجودة في الأقسام)
         const watchRegex = /href="(https?:\/\/ak\.sv\/watch\/[^"]+)"/gi;
-        const watchLinks = [];
-        let match;
-        while ((match = watchRegex.exec(html)) !== null) {
-            watchLinks.push(match[1]);
-        }
+        const watchLinks = [...new Set(Array.from(html.matchAll(watchRegex), m => m[1]))];
 
-        // 3. استخراج عناوين وصور العروض (إذا كنت تسحب من قسم الأفلام)
-        const titlesRegex = /<h3[^>]*>(.*?)<\/h3>/gi;
-        const titles = [];
-        while ((match = titlesRegex.exec(html)) !== null) {
-            titles.push(match[1].replace(/<[^>]*>?/gm, '').trim());
+        // 3. سحب العناوين والصور (لأرشفة المحتوى)
+        const entries = [];
+        const entryRegex = /<div class="entry-box">.*?<img src="(.*?)".*?<h3>(.*?)<\/h3>.*?href="(.*?)"/gs;
+        let match;
+        while ((match = entryRegex.exec(html)) !== null) {
+            entries.push({
+                title: match[2].trim(),
+                image: match[1],
+                link: match[3]
+            });
         }
 
         res.json({ 
             status: "success", 
-            results_found: {
-                direct_videos: videoLinks.length,
-                pages_found: [...new Set(watchLinks)].length
+            source: targetUrl,
+            summary: {
+                total_entries: entries.length,
+                total_direct_videos: videoLinks.length
             },
             data: {
-                direct_links: videoLinks, // روابط الـ mp4 المباشرة
-                related_pages: [...new Set(watchLinks)], // روابط الحلقات أو الأفلام الأخرى في الصفحة
-                titles: titles // أسماء الأفلام الموجودة في الصفحة
+                catalog: entries, // قائمة الأفلام/المسلسلات في الصفحة (العنوان، الصورة، الرابط)
+                direct_links: videoLinks, // الروابط المباشرة إذا كانت صفحة مشاهدة
+                all_found_pages: watchLinks // جميع الروابط الأخرى المكتشفة
             }
         });
 
     } catch (error) {
-        res.status(500).json({ status: "error", message: "حدث خطأ: " + error.message });
+        res.status(500).json({ status: "error", message: error.message });
     }
 });
 
-app.listen(PORT, () => console.log(`Comprehensive Scraper Ready on port ${PORT}`));
+app.listen(PORT, () => console.log(`Super Scraper Running on port ${PORT}`));
