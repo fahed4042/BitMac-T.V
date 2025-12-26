@@ -15,18 +15,19 @@ app.get('/', async (req, res) => {
     try {
         if (!movieName) return res.send("سيرفر Bitmac يعمل.. بانتظار البحث");
 
-        // تنظيف الاسم من السنة والأقواس
+        // 🚀 تنظيف الاسم من السنة والأقواس لضمان دقة البحث في عرب سيد
         movieName = movieName.replace(/\s*\([^)]*\d{4}[^)]*\)/g, '').replace(/\s*\d{4}/g, '').trim();
 
-        // 1. البحث
+        // 1. إجراء البحث
         const searchUrl = `https://a.asd.homes/find/?word=${encodeURIComponent(movieName)}`;
         const searchRes = await axios.get(searchUrl, { headers });
         
-        // البحث عن أول رابط فيلم في نتائج البحث
+        // البحث عن رابط الفيلم الأول في نتائج البحث
         const linkMatch = searchRes.data.match(/href="(https?:\/\/a\.asd\.homes\/[^"\/]+\/)"/i);
         
         if (linkMatch) {
             let pageUrl = linkMatch[1].replace(/\\/g, '');
+            // التوجه لصفحة المشاهدة مباشرة
             if (!pageUrl.endsWith('/watch/')) {
                 pageUrl = pageUrl.endsWith('/') ? pageUrl + "watch/" : pageUrl + "/watch/";
             }
@@ -35,44 +36,34 @@ app.get('/', async (req, res) => {
             const watchResponse = await axios.get(pageUrl, { headers, timeout: 15000 });
             const html = watchResponse.data;
 
-            // --- استراتيجية الاستخراج الديناميكي ---
+            let finalLinks = [];
+
+            // أ- استخراج رابط المشغل الأساسي (Iframe Player) - هذا الأهم لعرب سيد
+            const playerMatch = html.match(/src="(https?:\/\/a\.asd\.homes\/player\/[^"]+)"/i) 
+                             || html.match(/src="(https?:\/\/a\.asd\.homes\/embed\/[^"]+)"/i);
             
-            // أ- استخراج روابط الفيديو المباشرة (mp4, m3u8, mkv, webm)
-            const videoRegex = /(https?:\/\/[^"'\s]+\.(?:mp4|m3u8|mkv|webm)[^"'\s]*)/gi;
+            if (playerMatch) {
+                finalLinks.push(playerMatch[1]);
+            }
+
+            // ب- استخراج روابط الفيديو المباشرة إذا كانت مكشوفة (mp4, m3u8)
+            const videoRegex = /(https?:\/\/[^"'\s]+\.(?:mp4|m3u8|mkv)[^"'\s]*)/gi;
+            const rawVideos = html.match(videoRegex) || [];
             
-            // ب- استخراج روابط السيرفرات والمشغلات (iframes)
-            const iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
-            
-            // ج- استخراج الروابط المخفية داخل كود الجافا سكريبت (مثل روابط المشغلات السريعة)
-            const scriptLinkRegex = /["'](https?:\/\/[^"'\s]+\/(?:embed|v|e)\/[^"'\s]+)["']/gi;
+            // ج- استخراج روابط التحميل المباشرة (غالباً تكون روابط سريعة)
+            const downloadRegex = /href="(https?:\/\/[^"]+\/download\/[^"]+)"/gi;
+            const downloads = [...html.matchAll(downloadRegex)].map(m => m[1]);
 
-            let allLinks = [];
-
-            // تنفيذ المسح الشامل
-            const videos = html.match(videoRegex) || [];
-            const iframes = [...html.matchAll(iframeRegex)].map(m => m[1]);
-            const scriptLinks = [...html.matchAll(scriptLinkRegex)].map(m => m[1]);
-
-            // دمج كل النتائج وتصفيتها من الروابط غير المرغوبة (مثل روابط الصور أو ملفات الـ js)
-            allLinks = [...new Set([...videos, ...iframes, ...scriptLinks])]
-                .map(link => link.replace(/\\/g, '')) // تنظيف الروابط
-                .filter(link => {
-                    return !link.includes('google-analytics') && 
-                           !link.includes('facebook.com') &&
-                           !link.includes('.jpg') && 
-                           !link.includes('.png');
-                });
-
-            // هـ- البحث عن سيرفرات التحميل (غالباً ما تكون بجودة عالية)
-            const downloadLinkRegex = /href="(https?:\/\/[^"]+\/download\/[^"]+)"/gi;
-            const downloads = [...html.matchAll(downloadLinkRegex)].map(m => m[1]);
-            allLinks = [...new Set([...allLinks, ...downloads])];
+            // دمج وتصفية الروابط
+            finalLinks = [...new Set([...finalLinks, ...rawVideos, ...downloads])]
+                .map(link => link.replace(/\\/g, ''))
+                .filter(link => !link.includes('google') && !link.includes('facebook') && !link.includes('youtube'));
 
             res.json({ 
                 status: "success", 
                 data: {
-                    total_found: allLinks.length,
-                    direct_links: allLinks
+                    total_found: finalLinks.length,
+                    direct_links: finalLinks
                 },
                 source_page: pageUrl
             });
