@@ -1,4 +1,3 @@
-
 {
   "name": "bitmac-tv",
   "version": "1.0.0",
@@ -12,3 +11,4 @@
     "puppeteer-core": "^21.0.0"
   }
 }
+
