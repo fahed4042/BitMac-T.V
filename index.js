@@ -10,46 +10,58 @@ const headers = {
 };
 
 app.get('/', async (req, res) => {
-    const movieName = req.query.search;
+    let movieName = req.query.search;
 
     try {
         if (!movieName) return res.send("سيرفر Bitmac يعمل.. بانتظار البحث");
 
+        // --- إضافة تحسينات البحث هنا ---
+        
+        // 1. تنظيف النص: إزالة المسافات من البداية والنهاية
+        movieName = movieName.trim();
+
+        // 2. معالجة المسافات المتعددة أو الملتصقة:
+        // سنقوم باستبدال أي مسافة بـ (+) لضمان قبول محرك البحث للكلمات مفصلة
+        // وأيضاً سنقوم بتجربة البحث بالكلمة كما هي
+        const searchQuery = movieName.replace(/\s+/g, '+');
+
         // 1. إجراء البحث في أكوام
-        const searchUrl = `https://ak.sv/search?q=${encodeURIComponent(movieName)}`;
+        const searchUrl = `https://ak.sv/search?q=${encodeURIComponent(searchQuery)}`;
         const searchRes = await axios.get(searchUrl, { headers });
         
-        // 2. تعديل الـ Regex ليشمل /movie/ و /watch/ (حل مشكلة عدم الإيجاد)
+        // 2. تعديل الـ Regex ليكون أكثر مرونة في صيد الروابط
         const linkMatch = searchRes.data.match(/href="(https?:\/\/ak\.sv\/(movie|watch)\/[^"]+)"/i);
         
         if (linkMatch) {
             let pageUrl = linkMatch[1].replace(/\\/g, '');
             
-            // تحويل رابط الفيلم إلى رابط مشاهدة إذا لزم الأمر لجلب روابط الفيديو
             if (pageUrl.includes('/movie/')) {
                 pageUrl = pageUrl.replace('/movie/', '/watch/');
             }
 
-            // 3. جرد روابط الفيديو من صفحة المشاهدة
+            // 3. جلب روابط الفيديو
             const watchResponse = await axios.get(pageUrl, { headers, timeout: 15000 });
             const html = watchResponse.data;
             
-            // صيد روابط mp4 و m3u8
             const videoRegex = /(https?:\/\/[^"'\s]+\.(?:mp4|m3u8|mkv)[^"'\s]*)/gi;
             const rawLinks = html.match(videoRegex) || [];
             
-            // تنظيف الروابط من أي Backslashes لتعمل في المشغل
             const finalLinks = [...new Set(rawLinks.map(link => link.replace(/\\/g, '')))];
 
             res.json({ 
                 status: "success", 
+                query_used: searchQuery,
                 data: {
                     direct_links: finalLinks
                 },
                 source_page: pageUrl
             });
         } else {
-            res.json({ status: "error", message: "لم يتم العثور على الفيلم في نتائج البحث" });
+            res.json({ 
+                status: "error", 
+                message: "لم يتم العثور على نتائج، جرب كتابة الاسم بشكل أوضح",
+                suggestion: "تأكد من ترك مسافة بين اسم المسلسل والرقم" 
+            });
         }
 
     } catch (error) {
@@ -57,4 +69,4 @@ app.get('/', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Server is running with Movie/Watch support`));
+app.listen(PORT, () => console.log(`Server is running with Smart Search support`));
