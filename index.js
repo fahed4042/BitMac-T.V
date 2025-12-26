@@ -3,38 +3,40 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+const TMDB_API_KEY = 'ef0a74bf742f74fb6dd91f1058520401';
 const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': 'https://ak.sv/',
-    'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8'
+    'Referer': 'https://ak.sv/'
 };
 
-app.get('/', async (req, res) => {
-    const targetUrl = req.query.url;
-    // إذا أضفنا &direct=true للرابط سيرجع لنا رابط mp4 فقط
-    const isDirect = req.query.direct === 'true';
-
-    if (!targetUrl) return res.send("error");
-
+// مسار جلب الفيلم عن طريق الأيدي
+app.get('/movie/:id', async (req, res) => {
+    const movieId = req.params.id;
     try {
-        const response = await axios.get(targetUrl, { headers, timeout: 15000 });
-        const html = response.data;
-        
-        // البحث عن روابط الفيديو المباشرة
-        const videoRegex = /(https?:\/\/[^"'\s]+\.(?:mp4|m3u8|mkv)[^"'\s]*)/gi;
-        const videoLinks = [...new Set(html.match(videoRegex) || [])];
+        // 1. جلب اسم الفيلم من TMDB
+        const tmdbUrl = `https://api.themoviedb.org/3/movie/${movieId}?api_key=${TMDB_API_KEY}&language=ar`;
+        const tmdbRes = await axios.get(tmdbUrl);
+        const movieTitle = tmdbRes.data.title;
 
-        if (isDirect) {
-            // نرسل أول رابط فيديو يجده للتطبيق مباشرة
-            return res.send(videoLinks.length > 0 ? videoLinks[0] : "not_found");
+        // 2. البحث عن الفيلم في أكوام
+        const searchUrl = `https://ak.sv/search?q=${encodeURIComponent(movieTitle)}`;
+        const searchRes = await axios.get(searchUrl, { headers });
+        const firstMatch = searchRes.data.match(/href="(https?:\/\/ak\.sv\/watch\/[^"]+)"/i);
+
+        if (!firstMatch) return res.send("not_found");
+
+        // 3. جلب الرابط المباشر MP4 من صفحة المشاهدة
+        const movieRes = await axios.get(firstMatch[1], { headers });
+        const videoLinks = movieRes.data.match(/(https?:\/\/[^"'\s]+\.(?:mp4|m3u8)[^"'\s]*)/gi);
+
+        if (videoLinks && videoLinks.length > 0) {
+            res.send(videoLinks[0]); // إرسال الرابط المباشر فقط
+        } else {
+            res.send("not_found");
         }
-
-        // الرد العادي للمتصفح (JSON)
-        res.json({ status: "success", results: videoLinks });
-
     } catch (error) {
         res.send("error");
     }
 });
 
-app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server is running`));
