@@ -1,7 +1,8 @@
+
 {
   "name": "bitmac-tv",
   "version": "1.1.0",
-  "description": "FaselHD Link Extractor",
+  "description": "Akwam Link Extractor Fast Version",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -14,4 +15,3 @@
     "node": ">=18.0.0"
   }
 }
-
