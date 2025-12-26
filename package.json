@@ -1,7 +1,7 @@
 {
   "name": "bitmac-tv",
   "version": "1.1.0",
-  "description": "Akwam Link Extractor Fast Version",
+  "description": "Arabseed Link Extractor Fast Version",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
