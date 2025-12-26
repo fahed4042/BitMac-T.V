@@ -1,16 +1,13 @@
 {
   "name": "bitmac-tv",
   "version": "1.0.0",
-  "description": "Akwam Link Extractor",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "puppeteer": "^21.0.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "axios": "^1.6.0"
   }
 }
+
