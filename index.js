@@ -15,6 +15,7 @@ app.get('/', async (req, res) => {
 
     let browser;
     try {
+        // تم تعديل هذا الجزء ليعمل تلقائياً على سيرفر Render
         browser = await puppeteer.launch({
             headless: "new",
             args: [
@@ -22,13 +23,13 @@ app.get('/', async (req, res) => {
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--single-process'
-            ],
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+            ]
         });
 
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/119.0.0.0 Safari/537.36');
         
+        // محاولة الدخول للرابط مع مهلة دقيقة كاملة
         await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
         const links = await page.evaluate(() => {
