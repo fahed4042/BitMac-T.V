@@ -1,63 +1,59 @@
+
 const express = require('express');
 const puppeteer = require('puppeteer');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.get('/extract', async (req, res) => {
+app.get('/api/extract', async (req, res) => {
     const targetUrl = req.query.url;
 
     if (!targetUrl) {
-        return res.status(400).json({ error: "الرجاء إضافة رابط الفيلم بعد ?url=" });
+        return res.status(400).json({ status: "error", message: "يرجى إضافة رابط بعد ?url=" });
     }
 
     let browser;
     try {
-        // تشغيل المتصفح مع إعدادات متوافقة مع سيرفر Render المجاني
+        // تشغيل المتصفح بإعدادات مخصصة للسيرفرات المجانية لضمان عدم استهلاك الذاكرة
         browser = await puppeteer.launch({
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--single-process'
+                '--disable-dev-shm-usage'
             ],
+            // المسار الافتراضي للمتصفح على سيرفرات Render
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
         });
 
         const page = await browser.newPage();
         
-        // تعيين User-Agent ليبدو وكأن شخصاً حقيقياً يتصفح
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
+        // محاكاة متصفح هاتف ذكي لتجاوز حمايات المواقع بسهولة
+        await page.setUserAgent('Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36');
 
-        // الذهاب لرابط أكوام والانتظار حتى تحميل الصفحة
-        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        // التوجه للرابط والانتظار حتى يستقر الاتصال
+        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 45000 });
 
-        // استخراج جميع الروابط التي تنتهي بـ mp4 أو m3u8 أو روابط التحميل
+        // استخراج جميع روابط MP4 و m3u8 و mkv الموجودة في الكود
         const links = await page.evaluate(() => {
-            const results = [];
-            const elements = document.querySelectorAll('a, source, video');
-            elements.forEach(el => {
-                const link = el.href || el.src;
-                if (link && (link.includes('.mp4') || link.includes('.m3u8') || link.includes('download'))) {
-                    results.push(link);
-                }
-            });
-            return results;
+            const videoRegex = /https?:\/\/[^"']+\.(mp4|m3u8|mkv)/g;
+            const htmlContent = document.documentElement.innerHTML;
+            const matches = htmlContent.match(videoRegex) || [];
+            return [...new Set(matches)]; // إزالة الروابط المتكررة
         });
 
         await browser.close();
 
         res.json({
-            success: true,
-            extracted_at: new Date().toISOString(),
-            links: [...new Set(links)] // حذف الروابط المتكررة
+            project: "bitmac-tv",
+            status: "success",
+            results: links
         });
 
     } catch (error) {
         if (browser) await browser.close();
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ status: "error", message: error.message });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server bitmac-tv is live on port ${PORT}`);
 });
