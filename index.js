@@ -15,34 +15,38 @@ app.get('/', async (req, res) => {
     try {
         if (!movieName) return res.send("سيرفر Bitmac يعمل.. بانتظار البحث");
 
-        // --- إضافة تحسينات البحث هنا ---
-        
-        // 1. تنظيف النص: إزالة المسافات من البداية والنهاية
-        movieName = movieName.trim();
+        // --- وظيفة تنظيف وتجهيز النص للبحث ---
+        // تحويل "شباب البومب2" أو "شباب  البومب  2" إلى "شباب البومب 2"
+        let cleanName = movieName
+            .replace(/([a-zA-Z\u0600-\u06FF])(\d)/g, '$1 $2') // وضع مسافة بين الحرف والرقم لو كانوا ملتصقين
+            .replace(/(\d)([a-zA-Z\u0600-\u06FF])/g, '$1 $2') // وضع مسافة بين الرقم والحرف لو كانوا ملتصقين
+            .replace(/\s+/g, ' ')                             // تحويل أي مسافات زائدة لمسافة واحدة فقط
+            .trim();
 
-        // 2. معالجة المسافات المتعددة أو الملتصقة:
-        // سنقوم باستبدال أي مسافة بـ (+) لضمان قبول محرك البحث للكلمات مفصلة
-        // وأيضاً سنقوم بتجربة البحث بالكلمة كما هي
-        const searchQuery = movieName.replace(/\s+/g, '+');
-
-        // 1. إجراء البحث في أكوام
-        const searchUrl = `https://ak.sv/search?q=${encodeURIComponent(searchQuery)}`;
+        const searchUrl = `https://ak.sv/search?q=${encodeURIComponent(cleanName)}`;
         const searchRes = await axios.get(searchUrl, { headers });
         
-        // 2. تعديل الـ Regex ليكون أكثر مرونة في صيد الروابط
-        const linkMatch = searchRes.data.match(/href="(https?:\/\/ak\.sv\/(movie|watch)\/[^"]+)"/i);
+        // محاولة إيجاد أول رابط (سواء فيلم أو مشاهدة)
+        let linkMatch = searchRes.data.match(/href="(https?:\/\/ak\.sv\/(movie|watch)\/[^"]+)"/i);
+
+        // إذا لم يجد نتيجة بالاسم النظيف، نجرب البحث بالكلمات الأصلية كما جاءت
+        if (!linkMatch && movieName !== cleanName) {
+            const retryRes = await axios.get(`https://ak.sv/search?q=${encodeURIComponent(movieName)}`, { headers });
+            linkMatch = retryRes.data.match(/href="(https?:\/\/ak\.sv\/(movie|watch)\/[^"]+)"/i);
+        }
         
         if (linkMatch) {
             let pageUrl = linkMatch[1].replace(/\\/g, '');
             
+            // تحويل لرابط المشاهدة لجلب السيرفرات
             if (pageUrl.includes('/movie/')) {
                 pageUrl = pageUrl.replace('/movie/', '/watch/');
             }
 
-            // 3. جلب روابط الفيديو
             const watchResponse = await axios.get(pageUrl, { headers, timeout: 15000 });
             const html = watchResponse.data;
             
+            // صيد روابط الفيديو
             const videoRegex = /(https?:\/\/[^"'\s]+\.(?:mp4|m3u8|mkv)[^"'\s]*)/gi;
             const rawLinks = html.match(videoRegex) || [];
             
@@ -50,18 +54,12 @@ app.get('/', async (req, res) => {
 
             res.json({ 
                 status: "success", 
-                query_used: searchQuery,
-                data: {
-                    direct_links: finalLinks
-                },
+                search_used: cleanName,
+                data: { direct_links: finalLinks },
                 source_page: pageUrl
             });
         } else {
-            res.json({ 
-                status: "error", 
-                message: "لم يتم العثور على نتائج، جرب كتابة الاسم بشكل أوضح",
-                suggestion: "تأكد من ترك مسافة بين اسم المسلسل والرقم" 
-            });
+            res.json({ status: "error", message: "لم يتم العثور على الفيلم، حاول تغيير الكلمات" });
         }
 
     } catch (error) {
@@ -69,4 +67,4 @@ app.get('/', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Server is running with Smart Search support`));
+app.listen(PORT, () => console.log(`Server is running with Flexible Search`));
