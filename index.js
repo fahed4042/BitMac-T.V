@@ -3,9 +3,8 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// رؤوس الطلب لضمان تجاوز حماية فاصل إعلاني
 const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Referer': 'https://www.faselhds.biz/',
     'Accept-Language': 'ar,en-US;q=0.9,en;q=0.8'
 };
@@ -14,38 +13,39 @@ app.get('/', async (req, res) => {
     const movieName = req.query.search;
 
     try {
-        if (!movieName) return res.send("سيرفر Bitmac (نسخة فاصل) يعمل بنجاح!");
+        if (!movieName) return res.send("سيرفر FaselHD يعمل.. بانتظار البحث");
 
-        // 1. عملية البحث في فاصل إعلاني
+        // 1. إجراء البحث في فاصل إتش دي
         const searchUrl = `https://www.faselhds.biz/?s=${encodeURIComponent(movieName)}`;
         const searchRes = await axios.get(searchUrl, { headers });
         
-        // 2. استخراج رابط أول فيلم يظهر في النتائج
-        const linkMatch = searchRes.data.match(/href="(https?:\/\/www\.faselhds\.biz\/movies\/[^"]+)"/i);
+        // 2. استخراج أول رابط فيلم من نتائج البحث
+        const linkMatch = searchRes.data.match(/href="(https?:\/\/www\.faselhds\.biz\/(movie|video)\/[^"]+)"/i);
         
         if (linkMatch) {
-            const pageUrl = linkMatch[1];
-
-            // 3. دخول صفحة الفيلم لجلب روابط m3u8
-            const moviePage = await axios.get(pageUrl, { headers, timeout: 15000 });
-            const html = moviePage.data;
+            let pageUrl = linkMatch[1].replace(/\\/g, '');
             
-            // Regex لصيد روابط m3u8 المباشرة (التي وجدتها أنت سابقاً)
-            const videoRegex = /(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/gi;
+            // 3. جلب صفحة الفيلم لاستخراج الروابط
+            const watchResponse = await axios.get(pageUrl, { headers, timeout: 15000 });
+            const html = watchResponse.data;
+            
+            // صيد روابط الفيديو المباشرة (mp4/m3u8)
+            const videoRegex = /(https?:\/\/[^"'\s]+\.(?:mp4|m3u8|mkv)[^"'\s]*)/gi;
             const rawLinks = html.match(videoRegex) || [];
             
-            // تنظيف الروابط من أي رموز زائدة
+            // تنظيف وتصفية الروابط
             const finalLinks = [...new Set(rawLinks.map(link => link.replace(/\\/g, '')))];
 
             res.json({ 
                 status: "success", 
+                source: "FaselHD",
                 data: {
                     direct_links: finalLinks
                 },
                 source_page: pageUrl
             });
         } else {
-            res.json({ status: "error", message: "لم يتم العثور على نتائج في فاصل إعلاني" });
+            res.json({ status: "error", message: "لم يتم العثور على الفيلم في نتائج بحث فاصل" });
         }
 
     } catch (error) {
@@ -53,5 +53,4 @@ app.get('/', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`FaselHD Scraper is Running on port ${PORT}`));
-
+app.listen(PORT, () => console.log(`Server is running for FaselHD support`));
