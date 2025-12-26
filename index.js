@@ -15,37 +15,65 @@ app.get('/', async (req, res) => {
     try {
         if (!movieName) return res.send("سيرفر Bitmac يعمل.. بانتظار البحث");
 
-        // 🚀 تنظيف الاسم: إزالة الأقواس والسنة (مثلاً: "رهين (2025)" تصبح "رهين")
+        // تنظيف الاسم من السنة والأقواس
         movieName = movieName.replace(/\s*\([^)]*\d{4}[^)]*\)/g, '').replace(/\s*\d{4}/g, '').trim();
 
-        // 1. إجراء البحث في عرب سيد
+        // 1. البحث
         const searchUrl = `https://a.asd.homes/find/?word=${encodeURIComponent(movieName)}`;
         const searchRes = await axios.get(searchUrl, { headers });
         
-        // 2. صيد رابط الفيلم (نبحث عن أي رابط يؤدي لصفحة فيلم)
+        // البحث عن أول رابط فيلم في نتائج البحث
         const linkMatch = searchRes.data.match(/href="(https?:\/\/a\.asd\.homes\/[^"\/]+\/)"/i);
         
         if (linkMatch) {
             let pageUrl = linkMatch[1].replace(/\\/g, '');
-            
-            // إضافة /watch/ لضمان الدخول لصفحة المشغل مباشرة
             if (!pageUrl.endsWith('/watch/')) {
                 pageUrl = pageUrl.endsWith('/') ? pageUrl + "watch/" : pageUrl + "/watch/";
             }
 
-            // 3. جرد روابط الفيديو من صفحة المشاهدة
+            // 2. الدخول لصفحة المشاهدة واستخراج الروابط بذكاء
             const watchResponse = await axios.get(pageUrl, { headers, timeout: 15000 });
             const html = watchResponse.data;
+
+            // --- استراتيجية الاستخراج الديناميكي ---
             
-            // صيد كل ما هو mp4 أو m3u8 أو حتى روابط الـ iframe
-            const videoRegex = /(https?:\/\/[^"'\s]+\.(?:mp4|m3u8|mkv)[^"'\s]*)/gi;
-            const rawLinks = html.match(videoRegex) || [];
+            // أ- استخراج روابط الفيديو المباشرة (mp4, m3u8, mkv, webm)
+            const videoRegex = /(https?:\/\/[^"'\s]+\.(?:mp4|m3u8|mkv|webm)[^"'\s]*)/gi;
             
-            const finalLinks = [...new Set(rawLinks.map(link => link.replace(/\\/g, '')))];
+            // ب- استخراج روابط السيرفرات والمشغلات (iframes)
+            const iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
+            
+            // ج- استخراج الروابط المخفية داخل كود الجافا سكريبت (مثل روابط المشغلات السريعة)
+            const scriptLinkRegex = /["'](https?:\/\/[^"'\s]+\/(?:embed|v|e)\/[^"'\s]+)["']/gi;
+
+            let allLinks = [];
+
+            // تنفيذ المسح الشامل
+            const videos = html.match(videoRegex) || [];
+            const iframes = [...html.matchAll(iframeRegex)].map(m => m[1]);
+            const scriptLinks = [...html.matchAll(scriptLinkRegex)].map(m => m[1]);
+
+            // دمج كل النتائج وتصفيتها من الروابط غير المرغوبة (مثل روابط الصور أو ملفات الـ js)
+            allLinks = [...new Set([...videos, ...iframes, ...scriptLinks])]
+                .map(link => link.replace(/\\/g, '')) // تنظيف الروابط
+                .filter(link => {
+                    return !link.includes('google-analytics') && 
+                           !link.includes('facebook.com') &&
+                           !link.includes('.jpg') && 
+                           !link.includes('.png');
+                });
+
+            // هـ- البحث عن سيرفرات التحميل (غالباً ما تكون بجودة عالية)
+            const downloadLinkRegex = /href="(https?:\/\/[^"]+\/download\/[^"]+)"/gi;
+            const downloads = [...html.matchAll(downloadLinkRegex)].map(m => m[1]);
+            allLinks = [...new Set([...allLinks, ...downloads])];
 
             res.json({ 
                 status: "success", 
-                data: { direct_links: finalLinks },
+                data: {
+                    total_found: allLinks.length,
+                    direct_links: allLinks
+                },
                 source_page: pageUrl
             });
         } else {
@@ -57,4 +85,4 @@ app.get('/', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Server is running for Arabseed`));
+app.listen(PORT, () => console.log(`Bitmac Server: High-Performance Extractor Running`));
