@@ -3,12 +3,18 @@ const express = require('express');
 const puppeteer = require('puppeteer-core');
 const app = express();
 
-// الصفحة الرئيسية للتأكد من عمل السيرفر
+// 1. استجابة للرابط الأساسي (لمنع ظهور Not Found)
 app.get('/', (req, res) => {
-    res.status(200).send('<h1>سيرفر BitMac-TV يعمل بنجاح!</h1><p>الحالة: <b>Live</b></p>');
+    res.send(`
+        <div style="text-align:center; font-family:Arial; margin-top:50px;">
+            <h1 style="color: #2ecc71;">✅ سيرفر BitMac-TV يعمل بنجاح</h1>
+            <p>الحالة الآن: <b>Live (نشط)</b></p>
+            <p>لجلب الروابط استخدم: <code>/get_video_link?url=رابط_الفيديو</code></p>
+        </div>
+    `);
 });
 
-// المسار الرئيسي لجلب الروابط
+// 2. مسار جلب روابط الفيديو
 app.get('/get_video_link', async (req, res) => {
     let movieUrl = req.query.url; 
     
@@ -16,61 +22,46 @@ app.get('/get_video_link', async (req, res) => {
         return res.json({ error: "الرجاء إرسال رابط الفيلم" });
     }
 
-    // إصلاح مشكلة الروابط التي تحتوي على لغة عربية أو رموز
+    // فك تشفير الرابط في حال كان يحتوي على رموز عربية
     try {
         movieUrl = decodeURIComponent(movieUrl);
     } catch (e) {
-        console.log("رابط مفرمط جاهز");
+        console.log("الرابط جاهز بالفعل");
     }
 
     let browser;
     try {
         browser = await puppeteer.launch({
+            // مسار الكروم الافتراضي في ريندر
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage',
-                '--disable-gpu'
-            ]
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
         });
 
         const page = await browser.newPage();
-        
-        // تعيين وقت انتظار طويل وحجم شاشة وهمي
-        await page.setViewport({ width: 1280, height: 800 });
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
         
-        // الدخول للرابط مع انتظار تحميل المحتوى الأساسي
-        await page.goto(movieUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        // الانتقال للرابط
+        await page.goto(movieUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-        // فحص الصفحة بحثاً عن مشغل الفيديو
+        // استخراج الرابط المباشر
         const directLink = await page.evaluate(() => {
-            // البحث عن وسم الفيديو
-            const videoTag = document.querySelector('video source') || document.querySelector('video');
-            if (videoTag && videoTag.src) return videoTag.src;
-
-            // البحث عن iframe المشغل (أكوام يستخدم غالباً iframe)
-            const iframeTag = document.querySelector('.player-container iframe') || document.querySelector('iframe');
-            if (iframeTag && iframeTag.src) return iframeTag.src;
-
-            return null;
+            const video = document.querySelector('video source') || document.querySelector('video') || document.querySelector('iframe');
+            return video ? (video.src || video.href) : null;
         });
 
         if (directLink) {
             res.json({ direct_url: directLink, status: "success" });
         } else {
-            res.json({ error: "لم نجد رابط المشغل، تأكد أن الرابط لصفحة المشاهدة", status: "failed" });
+            res.json({ error: "لم يتم العثور على رابط مباشر في هذه الصفحة", status: "failed" });
         }
-
     } catch (e) {
-        res.status(500).json({ error: "حدث خطأ في السيرفر: " + e.message });
+        res.json({ error: "خطأ في معالجة الرابط: " + e.message });
     } finally {
         if (browser) await browser.close();
     }
 });
 
-// تشغيل السيرفر
+// تحديد المنفذ والتشغيل
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
