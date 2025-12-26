@@ -1,49 +1,63 @@
 const express = require('express');
 const puppeteer = require('puppeteer');
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => res.send('BitMac-TV Smart Scraper is Live!'));
+app.get('/extract', async (req, res) => {
+    const targetUrl = req.query.url;
 
-app.get('/get_video_link', async (req, res) => {
-    const movieUrl = req.query.url;
-    if (!movieUrl) return res.json({ error: "الرجاء إرسال رابط" });
+    if (!targetUrl) {
+        return res.status(400).json({ error: "الرجاء إضافة رابط الفيلم بعد ?url=" });
+    }
 
     let browser;
     try {
-        // تشغيل المتصفح المحمل عبر npx في إعدادات Start Command
+        // تشغيل المتصفح مع إعدادات متوافقة مع سيرفر Render المجاني
         browser = await puppeteer.launch({
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--single-process'
+            ],
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null,
         });
 
         const page = await browser.newPage();
+        
+        // تعيين User-Agent ليبدو وكأن شخصاً حقيقياً يتصفح
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36');
 
-        // منع تحميل الصور والإعلانات لتسريع العملية جداً
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
-                req.abort();
-            } else {
-                req.continue();
-            }
+        // الذهاب لرابط أكوام والانتظار حتى تحميل الصفحة
+        await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+
+        // استخراج جميع الروابط التي تنتهي بـ mp4 أو m3u8 أو روابط التحميل
+        const links = await page.evaluate(() => {
+            const results = [];
+            const elements = document.querySelectorAll('a, source, video');
+            elements.forEach(el => {
+                const link = el.href || el.src;
+                if (link && (link.includes('.mp4') || link.includes('.m3u8') || link.includes('download'))) {
+                    results.push(link);
+                }
+            });
+            return results;
         });
 
-        // الدخول للرابط
-        await page.goto(decodeURIComponent(movieUrl), { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await browser.close();
 
-        // البحث عن رابط الفيديو أو المشغل في أكوام
-        const directLink = await page.evaluate(() => {
-            const video = document.querySelector('video source') || document.querySelector('video') || document.querySelector('iframe');
-            return video ? (video.src || video.href) : null;
+        res.json({
+            success: true,
+            extracted_at: new Date().toISOString(),
+            links: [...new Set(links)] // حذف الروابط المتكررة
         });
 
-        res.json({ direct_url: directLink, status: "success" });
-    } catch (e) {
-        res.json({ error: "حدث خطأ: " + e.message });
-    } finally {
+    } catch (error) {
         if (browser) await browser.close();
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Server Ready'));
-
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
