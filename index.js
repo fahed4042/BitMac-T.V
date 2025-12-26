@@ -1,42 +1,37 @@
-
 const express = require('express');
-const puppeteer = require('puppeteer'); // استخدام النسخة الكاملة
+const puppeteer = require('puppeteer');
 const app = express();
 
 app.get('/', (req, res) => {
-    res.send('<h1 style="color:green;text-align:center;">السيرفر يعمل الآن بالإعدادات الصحيحة!</h1>');
+    res.send('<h1 style="color:blue;text-align:center;">سيرفر جلب الروابط جاهز!</h1>');
 });
 
 app.get('/get_video_link', async (req, res) => {
-    let movieUrl = req.query.url; 
-    if (!movieUrl) return res.json({ error: "الرجاء إرسال رابط" });
-
-    try { movieUrl = decodeURIComponent(movieUrl); } catch (e) {}
+    const movieUrl = req.query.url;
+    if (!movieUrl) return res.json({ error: "أدخل الرابط أولاً" });
 
     let browser;
     try {
-        // هنا تركنا المتصفح يعمل تلقائياً بدون تحديد مسار يدوي
         browser = await puppeteer.launch({
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            // سيتم تحميل المتصفح في هذا المسار عند بدء التشغيل
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
         });
 
         const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-        
-        await page.goto(movieUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        await page.goto(decodeURIComponent(movieUrl), { waitUntil: 'domcontentloaded', timeout: 30000 });
 
         const directLink = await page.evaluate(() => {
             const video = document.querySelector('video source') || document.querySelector('video') || document.querySelector('iframe');
             return video ? (video.src || video.href) : null;
         });
 
-        res.json({ direct_url: directLink, status: "success" });
+        res.json({ direct_url: directLink });
     } catch (e) {
-        res.json({ error: "حدث خطأ: " + e.message });
+        res.json({ error: e.message });
     } finally {
         if (browser) await browser.close();
     }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server Ready`));
+app.listen(process.env.PORT || 3000);
+
