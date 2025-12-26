@@ -1,6 +1,6 @@
 {
-  "name": "bitmac-tv-fasel",
-  "version": "1.2.0",
+  "name": "bitmac-tv",
+  "version": "1.1.0",
   "description": "FaselHD Link Extractor",
   "main": "index.js",
   "scripts": {
@@ -14,3 +14,4 @@
     "node": ">=18.0.0"
   }
 }
+
