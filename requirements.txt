@@ -1,5 +1,0 @@
-flask
-gunicorn
-selenium
-undetected-chromedriver
-webdriver-manager
