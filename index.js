@@ -1,35 +1,68 @@
 const express = require('express');
-const multer = require('multer'); // مكتبة للتعامل مع رفع الملفات
-const path = require('path');
+const axios = require('axios');
+const fileUpload = require('express-fileupload');
+const cloudinary = require('cloudinary').v2;
+const cors = require('cors');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// إعداد مكان تخزين الفيديوهات المرفوعة
-const storage = multer.diskStorage({
-    destination: './uploads/',
-    filename: function(req, file, cb){
-        // تسمية الملف بوقته الحالي لضمان عدم التكرار
-        cb(null, Date.now() + path.extname(file.originalname));
+// إعدادات Cloudinary (ستضع معلوماتك هنا أو في إعدادات Render)
+cloudinary.config({ 
+  cloud_name: 'YOUR_CLOUD_NAME', 
+  api_key: 'YOUR_API_KEY', 
+  api_secret: 'YOUR_API_SECRET' 
+});
+
+app.use(cors());
+app.use(express.json());
+app.use(fileUpload({ useTempFiles: true }));
+
+// 1. وظيفة استخراج الرابط (كودك الأصلي مع تحسين)
+app.get('/extract', async (req, res) => {
+    const targetUrl = req.query.url;
+    if (!targetUrl) return res.status(400).json({ status: false, message: "No URL provided" });
+
+    try {
+        const response = await axios.get(targetUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            timeout: 10000 
+        });
+        const html = response.data;
+        const videoMatch = html.match(/(https?:\/\/[^"']+\.(?:mp4|m3u8)[^"']*)/i);
+
+        if (videoMatch) {
+            res.json({ status: true, stream_url: videoMatch[0] });
+        } else {
+            res.json({ status: true, stream_url: targetUrl });
+        }
+    } catch (e) {
+        res.json({ status: false, message: "Error extracting video" });
     }
 });
 
-const upload = multer({ storage: storage });
+// 2. وظيفة الرفع ليعطيك رابط MP4 دائم
+app.post('/upload', async (req, res) => {
+    if (!req.files || !req.files.myVideo) {
+        return res.status(400).json({ status: false, message: "No file uploaded" });
+    }
 
-// جعل مجلد uploads متاحاً للعامة (عشان يعطيك رابط شغال)
-app.use('/videos', express.static('uploads'));
+    try {
+        const file = req.files.myVideo;
+        // رفع الفيديو إلى Cloudinary
+        const result = await cloudinary.uploader.upload(file.tempFilePath, { 
+            resource_type: "video",
+            folder: "my_videos"
+        });
 
-// كودك الأصلي للبحث عن الروابط (Extract)
-app.get('/extract', async (req, res) => {
-    // ... كودك الحالي ...
+        res.json({ 
+            status: true, 
+            stream_url: result.secure_url, // رابط مباشر ينتهي بـ mp4
+            public_id: result.public_id 
+        });
+    } catch (e) {
+        res.status(500).json({ status: false, message: e.message });
+    }
 });
 
-// إضافة نقطة (Endpoint) لرفع الفيديو من جهازك
-app.post('/upload', upload.single('myVideo'), (req, res) => {
-    if (!req.file) return res.send({ status: false, message: "No file uploaded" });
-    
-    // بناء الرابط الخاص بك
-    const videoUrl = `${req.protocol}://${req.get('host')}/videos/${req.file.filename}`;
-    res.json({ status: true, stream_url: videoUrl });
-});
-
-app.listen(PORT, () => console.log(`Server is Live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
