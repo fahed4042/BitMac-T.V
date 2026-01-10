@@ -7,18 +7,18 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// إعدادات Cloudinary (ستضع معلوماتك هنا أو في إعدادات Render)
+// التعديل هنا: قراءة البيانات من إعدادات Render التي قمت بتعبئتها
 cloudinary.config({ 
-  cloud_name: 'YOUR_CLOUD_NAME', 
-  api_key: 'YOUR_API_KEY', 
-  api_secret: 'YOUR_API_SECRET' 
+  cloud_name: process.env.YOUR_CLOUD_NAME, 
+  api_key: process.env.YOUR_API_KEY, 
+  api_secret: process.env.YOUR_API_SECRET 
 });
 
 app.use(cors());
 app.use(express.json());
 app.use(fileUpload({ useTempFiles: true }));
 
-// 1. وظيفة استخراج الرابط (كودك الأصلي مع تحسين)
+// 1. وظيفة استخراج الرابط
 app.get('/extract', async (req, res) => {
     const targetUrl = req.query.url;
     if (!targetUrl) return res.status(400).json({ status: false, message: "No URL provided" });
@@ -49,7 +49,6 @@ app.post('/upload', async (req, res) => {
 
     try {
         const file = req.files.myVideo;
-        // رفع الفيديو إلى Cloudinary
         const result = await cloudinary.uploader.upload(file.tempFilePath, { 
             resource_type: "video",
             folder: "my_videos"
@@ -57,7 +56,7 @@ app.post('/upload', async (req, res) => {
 
         res.json({ 
             status: true, 
-            stream_url: result.secure_url, // رابط مباشر ينتهي بـ mp4
+            stream_url: result.secure_url, 
             public_id: result.public_id 
         });
     } catch (e) {
