@@ -5,7 +5,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
-    res.send('✅ BitMac-TV Puppeteer Extractor Running');
+    res.send('⚡ BitMac-TV Fast Extractor Running');
 });
 
 app.get('/extract', async (req, res) => {
@@ -22,47 +22,67 @@ app.get('/extract', async (req, res) => {
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage'
+                '--disable-dev-shm-usage',
+                '--disable-extensions',
+                '--disable-gpu',
+                '--disable-background-networking',
+                '--disable-sync'
             ]
         });
 
         const page = await browser.newPage();
 
+        // User-Agent حقيقي
         await page.setUserAgent(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         );
 
-        // اعتراض الطلبات لالتقاط m3u8
+        // 🚫 حظر الموارد الثقيلة
+        await page.setRequestInterception(true);
+        page.on('request', req => {
+            const type = req.resourceType();
+            if (
+                type === 'image' ||
+                type === 'stylesheet' ||
+                type === 'font' ||
+                type === 'media'
+            ) {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
+
         let foundLinks = [];
 
-        await page.setRequestInterception(true);
+        // 🎯 التقاط روابط الفيديو فقط
         page.on('request', req => {
             const url = req.url();
             if (url.includes('.m3u8') || url.includes('.mp4')) {
                 foundLinks.push(url);
             }
-            req.continue();
         });
 
+        // تحميل سريع (لا ننتظر كل الشبكة)
         await page.goto(targetUrl, {
-            waitUntil: 'networkidle2',
-            timeout: 60000
+            waitUntil: 'domcontentloaded',
+            timeout: 45000
         });
 
-        // انتظار تحميل الفيديو
-        await page.waitForTimeout(8000);
+        // انتظار قصير جدًا
+        await page.waitForTimeout(4000);
 
         foundLinks = [...new Set(foundLinks)];
 
+        await browser.close();
+
         if (!foundLinks.length) {
-            await browser.close();
             return res.json({
                 status: "failed",
                 message: "لم يتم العثور على روابط"
             });
         }
 
-        await browser.close();
         res.json({
             status: "success",
             count: foundLinks.length,
@@ -80,5 +100,5 @@ app.get('/extract', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Server running on port ${PORT}`);
+    console.log(`⚡ Server running on port ${PORT}`);
 });
