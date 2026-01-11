@@ -1,26 +1,11 @@
 const express = require('express');
-const axios = require('axios');
-const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Headers قوية لتجاوز 403
-const BROWSER_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1"
-};
-
 app.get('/', (req, res) => {
-    res.send('✅ BitMac-TV Extractor Running');
+    res.send('✅ BitMac-TV Puppeteer Extractor Running');
 });
 
 app.get('/extract', async (req, res) => {
@@ -29,95 +14,63 @@ app.get('/extract', async (req, res) => {
         return res.json({ status: "error", message: "No URL provided" });
     }
 
+    let browser;
+
     try {
-        // ======================
-        // 1️⃣ طلب الصفحة الأساسية
-        // ======================
-        const mainPage = await axios.get(targetUrl, {
-            headers: {
-                ...BROWSER_HEADERS,
-                "Referer": targetUrl
-            },
-            timeout: 20000,
-            validateStatus: () => true
+        browser = await puppeteer.launch({
+            headless: "new",
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage'
+            ]
         });
 
-        if (mainPage.status !== 200) {
-            return res.json({
-                status: "blocked",
-                step: "main_page",
-                code: mainPage.status
-            });
-        }
+        const page = await browser.newPage();
 
-        const $ = cheerio.load(mainPage.data);
-        let iframeUrl = $('iframe').attr('src');
+        await page.setUserAgent(
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        );
 
-        if (!iframeUrl) {
-            return res.json({
-                status: "failed",
-                message: "iframe غير موجود"
-            });
-        }
+        // اعتراض الطلبات لالتقاط m3u8
+        let foundLinks = [];
 
-        if (iframeUrl.startsWith('//')) iframeUrl = 'https:' + iframeUrl;
-        if (iframeUrl.startsWith('/')) {
-            const base = new URL(targetUrl);
-            iframeUrl = base.origin + iframeUrl;
-        }
-
-        // ======================
-        // 2️⃣ طلب صفحة iframe
-        // ======================
-        const iframePage = await axios.get(iframeUrl, {
-            headers: {
-                ...BROWSER_HEADERS,
-                "Referer": targetUrl
-            },
-            timeout: 20000,
-            validateStatus: () => true
+        await page.setRequestInterception(true);
+        page.on('request', req => {
+            const url = req.url();
+            if (url.includes('.m3u8') || url.includes('.mp4')) {
+                foundLinks.push(url);
+            }
+            req.continue();
         });
 
-        if (iframePage.status !== 200) {
-            return res.json({
-                status: "blocked",
-                step: "iframe",
-                code: iframePage.status,
-                iframe: iframeUrl
-            });
-        }
+        await page.goto(targetUrl, {
+            waitUntil: 'networkidle2',
+            timeout: 60000
+        });
 
-        const html = iframePage.data;
+        // انتظار تحميل الفيديو
+        await page.waitForTimeout(8000);
 
-        // ======================
-        // 3️⃣ استخراج الروابط
-        // ======================
-        const regex = /(https?:\/\/[^"' ]+\.(m3u8|mp4)[^"' ]*)/gi;
-        let links = [];
-        let match;
+        foundLinks = [...new Set(foundLinks)];
 
-        while ((match = regex.exec(html)) !== null) {
-            links.push(match[1]);
-        }
-
-        links = [...new Set(links)];
-
-        if (!links.length) {
+        if (!foundLinks.length) {
+            await browser.close();
             return res.json({
                 status: "failed",
-                message: "لا يوجد روابط مباشرة",
-                iframe: iframeUrl
+                message: "لم يتم العثور على روابط"
             });
         }
 
+        await browser.close();
         res.json({
             status: "success",
-            count: links.length,
-            iframe: iframeUrl,
-            links
+            count: foundLinks.length,
+            links: foundLinks
         });
 
     } catch (err) {
+        if (browser) await browser.close();
         res.json({
             status: "error",
             message: "فشل الاستخراج",
