@@ -1,60 +1,45 @@
 const express = require('express');
 const axios = require('axios');
-const fileUpload = require('express-fileupload');
-const cloudinary = require('cloudinary').v2;
-const cors = require('cors');
-
+const cheerio = require('cheerio');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// قاعدة بيانات وهمية لتخزين الفيديوهات (ستختفي عند ريستارت السيرفر في رندر)
-let savedVideos = [];
+app.get('/extract', async (req, res) => {
+    const targetUrl = req.query.url; // الرابط الذي تريد استخراج الرابط المباشر منه
 
-cloudinary.config({ 
-  cloud_name: process.env.YOUR_CLOUD_NAME, 
-  api_key: process.env.YOUR_API_KEY, 
-  api_secret: process.env.YOUR_API_SECRET 
-});
+    if (!targetUrl) {
+        return res.status(400).json({ error: "الرجاء إرسال رابط URL" });
+    }
 
-app.use(cors());
-app.use(express.json());
-app.use(fileUpload({ useTempFiles: true }));
-
-// جلب قائمة الفيديوهات المحفوظة
-app.get('/my-library', (req, res) => {
-    res.json({ status: true, videos: savedVideos });
-});
-
-// رفع وتحويل أي فيديو (سواء من الهاتف أو من رابط خارجي)
-app.post('/process-video', async (req, res) => {
     try {
-        let source;
-        if (req.files && req.files.myVideo) {
-            source = req.files.myVideo.tempFilePath;
-        } else if (req.body.url) {
-            source = req.body.url;
-        } else {
-            return res.status(400).json({ status: false, message: "No source provided" });
-        }
-
-        const result = await cloudinary.uploader.upload(source, { 
-            resource_type: "video",
-            folder: "bitmac_tv"
+        // جلب كود الصفحة بدون متصفح (سرعة عالية واستهلاك رام منخفض)
+        const { data } = await axios.get(targetUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
         });
 
-        const newVideo = {
-            id: result.public_id,
-            url: result.secure_url,
-            name: req.body.customName || "فيديو جديد",
-            date: new Date().toLocaleDateString()
-        };
+        const $ = cheerio.load(data);
+        let directLink = "";
 
-        savedVideos.unshift(newVideo); // إضافة الفيديو لأول القائمة
-        res.json({ status: true, video: newVideo });
+        // مثال: البحث عن رابط فيديو مباشر داخل وسم <source> أو <a>
+        // يمكنك تخصيص هذا الجزء حسب السيرفر الذي تستهدفه
+        directLink = $('video source').attr('src') || $('a[href$=".mp4"]').attr('href') || $('iframe').attr('src');
 
-    } catch (e) {
-        res.status(500).json({ status: false, message: e.message });
+        if (directLink) {
+            res.json({
+                status: "success",
+                direct_link: directLink
+            });
+        } else {
+            res.json({ status: "failed", message: "لم يتم العثور على رابط مباشر" });
+        }
+
+    } catch (error) {
+        res.status(500).json({ error: "حدث خطأ أثناء الاتصال بالسيرفر" });
     }
 });
 
-app.listen(PORT, () => console.log(`Server Live on ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`المحرك يعمل على المنفذ ${PORT}`);
+});
