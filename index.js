@@ -1,11 +1,11 @@
 const express = require('express');
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
-    res.send('✅ Fast Real Video Extractor Running');
+    res.send('✅ BitMac Extractor Running');
 });
 
 app.get('/extract', async (req, res) => {
@@ -18,13 +18,12 @@ app.get('/extract', async (req, res) => {
 
     try {
         browser = await puppeteer.launch({
-            executablePath: '/usr/bin/google-chrome',
             headless: 'new',
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-gpu',
-                '--disable-dev-shm-usage'
+                '--disable-dev-shm-usage',
+                '--disable-gpu'
             ]
         });
 
@@ -34,7 +33,7 @@ app.get('/extract', async (req, res) => {
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         );
 
-        // 🚫 منع تحميل الأشياء الثقيلة
+        // حظر الموارد الثقيلة
         await page.setRequestInterception(true);
         page.on('request', req => {
             const type = req.resourceType();
@@ -47,11 +46,10 @@ app.get('/extract', async (req, res) => {
 
         let links = new Set();
 
-        // 🎯 التقاط الروابط الحقيقية فقط
         page.on('request', req => {
-            const r = req.url();
-            if (r.includes('.m3u8') || r.includes('.mp4')) {
-                links.add(r);
+            const u = req.url();
+            if (u.includes('.m3u8') || u.includes('.mp4')) {
+                links.add(u);
             }
         });
 
@@ -60,7 +58,6 @@ app.get('/extract', async (req, res) => {
             timeout: 60000
         });
 
-        // انتظار قصير
         await page.waitForTimeout(5000);
 
         await browser.close();
@@ -89,5 +86,5 @@ app.get('/extract', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`✅ Server running on port ${PORT}`);
 });
