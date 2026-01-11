@@ -1,16 +1,16 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.get('/', (req, res) => {
-    res.send('⚡ BitMac-TV Fast Extractor Running');
+    res.send('✅ Fast Real Video Extractor Running');
 });
 
 app.get('/extract', async (req, res) => {
-    const targetUrl = req.query.url;
-    if (!targetUrl) {
+    const url = req.query.url;
+    if (!url) {
         return res.json({ status: "error", message: "No URL provided" });
     }
 
@@ -18,75 +18,64 @@ app.get('/extract', async (req, res) => {
 
     try {
         browser = await puppeteer.launch({
-            headless: "new",
+            executablePath: '/usr/bin/google-chrome',
+            headless: 'new',
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-extensions',
                 '--disable-gpu',
-                '--disable-background-networking',
-                '--disable-sync'
+                '--disable-dev-shm-usage'
             ]
         });
 
         const page = await browser.newPage();
 
-        // User-Agent حقيقي
         await page.setUserAgent(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         );
 
-        // 🚫 حظر الموارد الثقيلة
+        // 🚫 منع تحميل الأشياء الثقيلة
         await page.setRequestInterception(true);
         page.on('request', req => {
             const type = req.resourceType();
-            if (
-                type === 'image' ||
-                type === 'stylesheet' ||
-                type === 'font' ||
-                type === 'media'
-            ) {
+            if (['image', 'stylesheet', 'font'].includes(type)) {
                 req.abort();
             } else {
                 req.continue();
             }
         });
 
-        let foundLinks = [];
+        let links = new Set();
 
-        // 🎯 التقاط روابط الفيديو فقط
+        // 🎯 التقاط الروابط الحقيقية فقط
         page.on('request', req => {
-            const url = req.url();
-            if (url.includes('.m3u8') || url.includes('.mp4')) {
-                foundLinks.push(url);
+            const r = req.url();
+            if (r.includes('.m3u8') || r.includes('.mp4')) {
+                links.add(r);
             }
         });
 
-        // تحميل سريع (لا ننتظر كل الشبكة)
-        await page.goto(targetUrl, {
+        await page.goto(url, {
             waitUntil: 'domcontentloaded',
-            timeout: 45000
+            timeout: 60000
         });
 
-        // انتظار قصير جدًا
-        await page.waitForTimeout(4000);
-
-        foundLinks = [...new Set(foundLinks)];
+        // انتظار قصير
+        await page.waitForTimeout(5000);
 
         await browser.close();
 
-        if (!foundLinks.length) {
+        if (links.size === 0) {
             return res.json({
                 status: "failed",
-                message: "لم يتم العثور على روابط"
+                message: "لم يتم العثور على روابط (الموقع محمي أو DRM)"
             });
         }
 
         res.json({
             status: "success",
-            count: foundLinks.length,
-            links: foundLinks
+            count: links.size,
+            links: [...links]
         });
 
     } catch (err) {
@@ -100,5 +89,5 @@ app.get('/extract', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`⚡ Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
 });
