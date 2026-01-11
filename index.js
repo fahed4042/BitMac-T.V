@@ -1,53 +1,109 @@
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const app = express();
 
+const app = express();
 const PORT = process.env.PORT || 10000;
 
+// الصفحة الرئيسية
 app.get('/', (req, res) => {
-    res.status(200).send('<h1>BitMac-TV Server is Live!</h1>');
+    res.send('<h2>✅ BitMac-TV Extractor Running</h2>');
 });
 
 app.get('/extract', async (req, res) => {
     const targetUrl = req.query.url;
-    if (!targetUrl) return res.status(400).json({ status: "error", message: "No URL provided" });
+    if (!targetUrl) {
+        return res.json({ status: "error", message: "❌ No URL provided" });
+    }
 
     try {
-        const response = await axios.get(targetUrl, {
+        // ======================
+        // 1️⃣ طلب الصفحة الأساسية
+        // ======================
+        const mainPage = await axios.get(targetUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://vidsrc.to/',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5'
+                "User-Agent": "Mozilla/5.0",
+                "Referer": targetUrl
             },
-            timeout: 10000
+            timeout: 15000
         });
 
-        const html = response.data;
-        const $ = cheerio.load(html);
-        
-        // محاولة البحث عن الرابط في عدة أماكن
-        let directLink = $('video source').attr('src') || $('video').attr('src') || $('iframe').attr('src');
+        const $ = cheerio.load(mainPage.data);
 
-        if (!directLink) {
-            const regex = /(https?:\/\/[^"']+\.(m3u8|mp4)[^"']*)/g;
-            const matches = html.match(regex);
-            if (matches) directLink = matches[0];
+        // ======================
+        // 2️⃣ استخراج iframe
+        // ======================
+        let iframeUrl = $('iframe').attr('src');
+
+        if (!iframeUrl) {
+            return res.json({
+                status: "failed",
+                message: "❌ لم يتم العثور على iframe"
+            });
         }
 
-        if (directLink) {
-            if (directLink.startsWith('//')) directLink = 'https:' + directLink;
-            res.json({ status: "success", direct_link: directLink });
-        } else {
-            res.json({ status: "failed", message: "لم يتم العثور على الرابط المباشر، جرب سيرفر آخر" });
+        if (iframeUrl.startsWith('//')) iframeUrl = 'https:' + iframeUrl;
+        if (iframeUrl.startsWith('/')) {
+            const base = new URL(targetUrl);
+            iframeUrl = base.origin + iframeUrl;
         }
-    } catch (e) {
-        // إرسال تفاصيل الخطأ بشكل أوضح
-        res.status(200).json({ status: "error", message: "فشل في الوصول للموقع الأصلي: " + e.message });
+
+        // ======================
+        // 3️⃣ طلب صفحة iframe
+        // ======================
+        const iframePage = await axios.get(iframeUrl, {
+            headers: {
+                "User-Agent": "Mozilla/5.0",
+                "Referer": targetUrl
+            },
+            timeout: 15000
+        });
+
+        const html = iframePage.data;
+
+        // ======================
+        // 4️⃣ البحث عن روابط مباشرة
+        // ======================
+        let links = [];
+
+        // m3u8 / mp4
+        const regex = /(https?:\/\/[^"' ]+\.(m3u8|mp4)[^"' ]*)/gi;
+        let match;
+        while ((match = regex.exec(html)) !== null) {
+            links.push(match[1]);
+        }
+
+        // إزالة التكرار
+        links = [...new Set(links)];
+
+        if (links.length === 0) {
+            return res.json({
+                status: "failed",
+                message: "❌ لم يتم العثور على روابط مباشرة",
+                iframe: iframeUrl
+            });
+        }
+
+        // ======================
+        // 5️⃣ نجاح
+        // ======================
+        res.json({
+            status: "success",
+            count: links.length,
+            iframe: iframeUrl,
+            links: links
+        });
+
+    } catch (err) {
+        res.json({
+            status: "error",
+            message: "❌ فشل الاستخراج",
+            error: err.message
+        });
     }
 });
 
+// تشغيل السيرفر
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`✅ Server running on port ${PORT}`);
 });
