@@ -2,44 +2,53 @@ const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const app = express();
+
+// Render يعطي المنفذ تلقائياً عبر process.env.PORT
 const PORT = process.env.PORT || 3000;
 
-app.get('/extract', async (req, res) => {
-    const targetUrl = req.query.url; // الرابط الذي تريد استخراج الرابط المباشر منه
+app.get('/', (req, res) => {
+    res.send('مستخرج الروابط الذكي يعمل بنجاح!');
+});
 
-    if (!targetUrl) {
-        return res.status(400).json({ error: "الرجاء إرسال رابط URL" });
+app.get('/get-link', async (req, res) => {
+    const videoUrl = req.query.url;
+
+    if (!videoUrl) {
+        return res.json({ error: "الرجاء إضافة رابط URL في نهاية الطلب" });
     }
 
     try {
-        // جلب كود الصفحة بدون متصفح (سرعة عالية واستهلاك رام منخفض)
-        const { data } = await axios.get(targetUrl, {
+        // طلب الصفحة بدون تحميل الصور أو الجافاسكريبت لزيادة السرعة
+        const response = await axios.get(videoUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
+            },
+            timeout: 10000 // مهلة 10 ثوانٍ
         });
 
-        const $ = cheerio.load(data);
-        let directLink = "";
-
-        // مثال: البحث عن رابط فيديو مباشر داخل وسم <source> أو <a>
-        // يمكنك تخصيص هذا الجزء حسب السيرفر الذي تستهدفه
-        directLink = $('video source').attr('src') || $('a[href$=".mp4"]').attr('href') || $('iframe').attr('src');
+        const $ = cheerio.load(response.data);
+        
+        // استراتيجية البحث عن الرابط المباشر (تعدل حسب الموقع المستهدف)
+        let directLink = $('source').attr('src') || 
+                         $('video').attr('src') || 
+                         $('a[href*=".mp4"]').attr('href');
 
         if (directLink) {
-            res.json({
-                status: "success",
-                direct_link: directLink
-            });
+            // تحويل الرابط إلى رابط مطلق إذا كان نسبياً
+            if (directLink.startsWith('/')) {
+                const urlObj = new URL(videoUrl);
+                directLink = urlObj.origin + directLink;
+            }
+            res.json({ status: "success", link: directLink });
         } else {
-            res.json({ status: "failed", message: "لم يتم العثور على رابط مباشر" });
+            res.json({ status: "error", message: "تعذر العثور على رابط مباشر تلقائياً" });
         }
 
     } catch (error) {
-        res.status(500).json({ error: "حدث خطأ أثناء الاتصال بالسيرفر" });
+        res.status(500).json({ status: "error", message: error.message });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`المحرك يعمل على المنفذ ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });
