@@ -3,14 +3,15 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const app = express();
 
-const PORT = process.env.PORT || 3000;
+// استخدام المنفذ 10000 وهو الافتراضي لـ Render
+const PORT = process.env.PORT || 10000;
 
-// هذا المسار ضروري للتأكد أن السيرفر يعمل
+// إضافة مسار أساسي لمنع خطأ Not Found عند فتح الرابط المباشر
 app.get('/', (req, res) => {
-    res.send('Server is running and ready!');
+    res.status(200).send('<h1>BitMac-TV Server is Live!</h1><p>Use /extract?url=YOUR_URL to get links.</p>');
 });
 
-// مسار الاستخراج الذي يستدعيه التطبيق
+// المسار المخصص للاستخراج
 app.get('/extract', async (req, res) => {
     const targetUrl = req.query.url;
     if (!targetUrl) return res.status(400).json({ status: "error", message: "No URL provided" });
@@ -18,8 +19,7 @@ app.get('/extract', async (req, res) => {
     try {
         const response = await axios.get(targetUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': new URL(targetUrl).origin
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             },
             timeout: 10000
         });
@@ -38,7 +38,7 @@ app.get('/extract', async (req, res) => {
             if (directLink.startsWith('//')) directLink = 'https:' + directLink;
             res.json({ status: "success", direct_link: directLink });
         } else {
-            res.json({ status: "failed", message: "Link not found" });
+            res.json({ status: "failed", message: "Direct link not found in this page" });
         }
     } catch (e) {
         res.status(500).json({ status: "error", message: e.message });
@@ -46,5 +46,5 @@ app.get('/extract', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`Server is listening on port ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });
