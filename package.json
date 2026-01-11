@@ -1,9 +1,13 @@
 {
-  "name": "bitmac-tv-extractor",
+  "name": "bitmac-tv-fast-extractor",
   "version": "1.0.0",
+  "description": "Fast video extractor using Puppeteer (light mode)",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "express": "^4.18.2",
