@@ -1,40 +1,51 @@
 import express from "express";
 import puppeteer from "puppeteer-core";
+import chromium from "chrome-aws-lambda";
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.get("/extract", async (req, res) => {
-  const url = req.query.url;
-  if (!url) return res.json({ status: "error", message: "No URL provided" });
+  const targetUrl = req.query.url;
+  if (!targetUrl) return res.json({ status: "error", message: "No URL provided" });
 
   let browser;
   try {
     browser = await puppeteer.launch({
-      executablePath: puppeteer.executablePath(), // من النسخة اللي نزلناها
+      executablePath: await chromium.executablePath,
       headless: true,
-      args: ["--no-sandbox","--disable-setuid-sandbox"]
+      args: chromium.args
     });
 
     const page = await browser.newPage();
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
 
-    const links = await page.evaluate(() =>
-      Array.from(document.querySelectorAll("video source"))
-           .map(v => v.src)
-           .filter(Boolean)
-    );
+    await page.setRequestInterception(true);
+    page.on("request", r => {
+      const t = r.resourceType();
+      if (["image", "stylesheet", "font"].includes(t)) r.abort();
+      else r.continue();
+    });
+
+    const found = new Set();
+
+    page.on("request", r => {
+      const u = r.url();
+      if (u.includes(".m3u8") || u.includes(".mp4")) found.add(u);
+    });
+
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForTimeout(5000);
 
     await browser.close();
 
-    if (links.length === 0)
+    if (found.size === 0)
       return res.json({ status: "failed", message: "No video links found" });
 
-    res.json({ status: "success", links });
+    res.json({ status: "success", links: [...found] });
 
-  } catch(e) {
+  } catch (err) {
     if(browser) await browser.close();
-    res.json({ status:"error", message: e.message });
+    res.json({ status:"error", message: err.message });
   }
 });
 
