@@ -3,52 +3,42 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const app = express();
 
-// Render يعطي المنفذ تلقائياً عبر process.env.PORT
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-    res.send('مستخرج الروابط الذكي يعمل بنجاح!');
-});
-
-app.get('/get-link', async (req, res) => {
-    const videoUrl = req.query.url;
-
-    if (!videoUrl) {
-        return res.json({ error: "الرجاء إضافة رابط URL في نهاية الطلب" });
-    }
+app.get('/extract', async (req, res) => {
+    const targetUrl = req.query.url;
+    if (!targetUrl) return res.status(400).json({ error: "No URL provided" });
 
     try {
-        // طلب الصفحة بدون تحميل الصور أو الجافاسكريبت لزيادة السرعة
-        const response = await axios.get(videoUrl, {
+        const response = await axios.get(targetUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+                'Referer': new URL(targetUrl).origin
             },
-            timeout: 10000 // مهلة 10 ثوانٍ
+            timeout: 10000
         });
 
-        const $ = cheerio.load(response.data);
-        
-        // استراتيجية البحث عن الرابط المباشر (تعدل حسب الموقع المستهدف)
-        let directLink = $('source').attr('src') || 
-                         $('video').attr('src') || 
-                         $('a[href*=".mp4"]').attr('href');
+        const html = response.data;
+        const $ = cheerio.load(html);
 
-        if (directLink) {
-            // تحويل الرابط إلى رابط مطلق إذا كان نسبياً
-            if (directLink.startsWith('/')) {
-                const urlObj = new URL(videoUrl);
-                directLink = urlObj.origin + directLink;
-            }
-            res.json({ status: "success", link: directLink });
-        } else {
-            res.json({ status: "error", message: "تعذر العثور على رابط مباشر تلقائياً" });
+        // محاولة استخراج الرابط من الوسوم أو عبر Regex للروابط المشفرة داخل النصوص
+        let directLink = $('video source').attr('src') || $('video').attr('src') || $('iframe').attr('src');
+
+        if (!directLink) {
+            const regex = /(https?:\/\/[^"']+\.(m3u8|mp4)[^"']*)/g;
+            const matches = html.match(regex);
+            if (matches) directLink = matches[0];
         }
 
-    } catch (error) {
-        res.status(500).json({ status: "error", message: error.message });
+        if (directLink) {
+            if (directLink.startsWith('//')) directLink = 'https:' + directLink;
+            res.json({ status: "success", direct_link: directLink });
+        } else {
+            res.json({ status: "failed", message: "Direct link not found" });
+        }
+    } catch (e) {
+        res.status(500).json({ status: "error", message: e.message });
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
