@@ -5,15 +5,15 @@ const app = express();
 
 const PORT = process.env.PORT || 3000;
 
-// التأكد من أن السيرفر يعمل عند الدخول للرابط الرئيسي
+// هذا المسار ضروري للتأكد أن السيرفر يعمل
 app.get('/', (req, res) => {
-    res.send('Server is Live!');
+    res.send('Server is running and ready!');
 });
 
-// المسار المطلوب لاستخراج الروابط
+// مسار الاستخراج الذي يستدعيه التطبيق
 app.get('/extract', async (req, res) => {
     const targetUrl = req.query.url;
-    if (!targetUrl) return res.status(400).json({ status: "error", message: "No URL" });
+    if (!targetUrl) return res.status(400).json({ status: "error", message: "No URL provided" });
 
     try {
         const response = await axios.get(targetUrl, {
@@ -45,4 +45,6 @@ app.get('/extract', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Server is listening on port ${PORT}`);
+});
