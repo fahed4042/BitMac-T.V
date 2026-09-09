@@ -5,55 +5,43 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 require('dotenv').config();
 
 const app = express();
-app.use(express.json());
 app.use(express.static('public'));
 
+// إعداد Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// ذاكرة المؤقت لأسماء الفيديوهات في الخادم
-const uploadedVideos = [];
-
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
-  params: async (req, file) => {
-    // تحديد المجلد ديناميكياً من المدخلات أو افتراضي
-    const targetFolder = req.body.folderName || 'my_app_videos';
-    return {
-      folder: targetFolder,
-      resource_type: 'video',
-      allowed_formats: ['mp4', 'mov', 'mkv', 'webm'],
-      public_id: req.body.videoTitle ? `${Date.now()}_${req.body.videoTitle}` : undefined
-    };
+  params: {
+    folder: 'my_app_videos',
+    resource_type: 'video',
+    allowed_formats: ['mp4', 'mov', 'mkv', 'webm']
   }
 });
 
 const upload = multer({ storage: storage });
 
-// مسار رفع الفيديو مع الاسم والمجلد
-app.post('/upload-video', upload.single('video'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ success: false, message: 'لم يتم اختيار ملف' });
-  }
+// مسار الرفع مع معالجة الأخطاء
+app.post('/upload-video', (req, res) => {
+  upload.single('video')(req, res, (err) => {
+    if (err) {
+      console.error('Cloudinary Upload Error:', err);
+      return res.status(500).json({ 
+        success: false, 
+        message: err.message || 'حدث خطأ أثناء رفع الفيديو على السحابة' 
+      });
+    }
 
-  const videoData = {
-    title: req.body.videoTitle || 'فيديو بدون عنوان',
-    folder: req.body.folderName || 'my_app_videos',
-    url: req.file.path,
-    createdAt: new Date().toLocaleTimeString('ar-EG')
-  };
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'لم يتم إرفاق أي فيديو' });
+    }
 
-  uploadedVideos.unshift(videoData);
-
-  res.json({ success: true, video: videoData, allVideos: uploadedVideos });
-});
-
-// مسار جلب قائمة الفيديوهات المرفوعة
-app.get('/api/videos', (req, res) => {
-  res.json({ success: true, videos: uploadedVideos });
+    res.json({ success: true, url: req.file.path });
+  });
 });
 
 const PORT = process.env.PORT || 10000;
