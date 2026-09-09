@@ -1,54 +1,40 @@
 const express = require('express');
 const multer = require('multer');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const path = require('path');
-const cors = require('cors');
-const fs = require('fs');
-const http = require('http'); // أضفنا هذا لعمل الـ Ping
+require('dotenv').config();
 
 const app = express();
-app.use(cors());
 
-// إنشاء مجلد الرفع
-const uploadDir = './uploads';
-if (!fs.existsSync(uploadDir)) { fs.mkdirSync(uploadDir); }
+// إعداد خدمة التخزين الدائم
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => { cb(null, uploadDir); },
-    filename: (req, file, cb) => {
-        cb(null, 'voice_' + Date.now() + '.3gp');
-    }
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'my_app_videos',
+    resource_type: 'video',
+    allowed_formats: ['mp4', 'mov', 'mkv', 'webm']
+  }
 });
 
 const upload = multer({ storage: storage });
 
-app.use('/uploads', express.static('uploads'));
+app.use(express.static('public'));
 
-app.get('/', (req, res) => {
-    res.send('Server is Online! Ready for uploads.');
+// مسار رفع الفيديو من صفحة HTML
+app.post('/upload-video', upload.single('video'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: 'لم يتم اختيار ملف' });
+  }
+  // إرجاع رابط الفيديو الدائم لصفحة HTML
+  res.json({ success: true, url: req.file.path });
 });
 
-app.post('/upload', upload.single('audio'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No file uploaded' });
-    }
-    const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
-    res.json({ url: fileUrl });
-});
-
-// --- كود الحفاظ على اليقظة (Keep-Alive) ---
-// يقوم السيرفر بطلب نفسه كل دقيقة لمنع Render من النوم
-const SERVER_URL = 'https://bitmac-t-v-1.onrender.com/'; 
-
-setInterval(() => {
-    http.get(SERVER_URL, (res) => {
-        console.log('Keep-alive ping sent, status: ' + res.statusCode);
-    }).on('error', (err) => {
-        console.log('Keep-alive error: ' + err.message);
-    });
-}, 60000); // 60000 ملي ثانية = 1 دقيقة
-// ----------------------------------------
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => { 
-    console.log(`Server running on port ${PORT}`); 
-});
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
