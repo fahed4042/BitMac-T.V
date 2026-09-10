@@ -1,25 +1,25 @@
 const express = require('express');
 const multer = require('multer');
-const axios = require('axios');
-const FormData = require('form-data');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
+const { TelegramClient } = require('telegram');
+const { StringSession } = require('telegram/sessions');
+
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '1000mb' }));
-app.use(express.urlencoded({ limit: '1000mb', extended: true }));
+app.use(express.json({ limit: '2000mb' }));
+app.use(express.urlencoded({ limit: '2000mb', extended: true }));
 app.use(express.static('public'));
 
-// إنشاء مجلد مؤقت لحفظ الفيديو على القرص الصلب لتجنب استهلاك الذاكرة (RAM)
+// إعداد مجلد التخزين المؤقت
 const uploadDir = path.join(__dirname, 'tmp');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// استخدام diskStorage لمنع انهيار السيرفر عند رفع الملفات الكبيرة
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
@@ -27,28 +27,34 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 2000 * 1024 * 1024 } // رفع الحد لـ 2GB
+  limits: { fileSize: 2000 * 1024 * 1024 } // حد الأقصى 2GB
 });
 
+// المفاتيح مدمجة مباشرة
 const BOT_TOKEN = process.env.BOT_TOKEN || '8740811206:AAG29igXLxFAZ9XjPoGbfAVOVMMsDYbnZxo';
-const CHAT_ID = process.env.CHAT_ID || '1544455907'; 
+const CHAT_ID = process.env.CHAT_ID || '1544455907';
+const API_ID = parseInt(process.env.API_ID || '33190715');
+const API_HASH = process.env.API_HASH || 'ced91cea20b517420df5f296117d67f3';
 
 let mediaDatabase = [];
 
-// وظيفة إرسال رسالة نصية إلى تيليجرام
-async function sendTelegramMessage(text) {
-  try {
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      chat_id: CHAT_ID,
-      text: text,
-      parse_mode: 'Markdown'
-    });
-  } catch (err) {
-    console.error('Telegram Message Error:', err.message);
-  }
-}
+// تهيئة عميل Telegram MTProto
+const stringSession = new StringSession('');
+const client = new TelegramClient(stringSession, API_ID, API_HASH, {
+  connectionRetries: 5,
+});
 
-// 1. مسار رفع الفيديو عبر Streams والتنظيف التلقائي للملفات
+(async () => {
+  try {
+    console.log('جاري الاتصال ببروتوكول Telegram MTProto...');
+    await client.start({ botAuthToken: BOT_TOKEN });
+    console.log(`تم الاتصال بنجاح! جاهز لرفع الملفات حتى 2GB على CHAT_ID: ${CHAT_ID}`);
+  } catch (err) {
+    console.error('خطأ في الاتصال بتيليجرام:', err.message);
+  }
+})();
+
+// 1. مسار رفع الفيديو الضخم (حتى 2GB)
 app.post('/upload-video', upload.single('video'), async (req, res) => {
   req.setTimeout(0);
   res.setTimeout(0);
@@ -63,68 +69,63 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
   const workEpisode = episode || '';
 
   try {
-    const formData = new FormData();
-    formData.append('chat_id', CHAT_ID);
-    formData.append('video', fs.createReadStream(filePath), {
-      filename: req.file.originalname || 'video.mp4'
+    const result = await client.sendFile(CHAT_ID, {
+      file: filePath,
+      caption: `🎬 *تم رفع عمل جديد!*\n📌 *الاسم:* ${workName}\n📺 *النوع:* ${type === 'series' ? 'مسلسل' : 'فيلم'} ${workEpisode}`,
+      workers: 4,
     });
-    formData.append('caption', `🎬 *تم رفع عمل جديد!*\n📌 *الاسم:* ${workName}\n📺 *النوع:* ${type === 'series' ? 'مسلسل' : 'فيلم'} ${workEpisode}`);
 
-    const telegramResponse = await axios.post(
-      `https://api.telegram.org/bot${BOT_TOKEN}/sendVideo`,
-      formData,
-      {
-        headers: formData.getHeaders(),
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        timeout: 0
-      }
-    );
-
-    // حذف الملف المؤقت فور الانتهاء لتوفير المساحة
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-    if (telegramResponse.data && telegramResponse.data.ok) {
-      const result = telegramResponse.data.result;
-      const videoObj = result.video || result.document;
-      const fileId = videoObj.file_id;
+    const messageId = result.id;
+    const streamingUrl = `${req.protocol}://${req.get('host')}/stream/${messageId}`;
 
-      const fileRoute = await axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`);
-      const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileRoute.data.result.file_path}`;
+    const newMediaItem = {
+      id: Date.now(),
+      type: type || 'movie',
+      title: workName,
+      episode: workEpisode,
+      url: streamingUrl,
+      messageId: messageId
+    };
+    mediaDatabase.unshift(newMediaItem);
 
-      const newMediaItem = {
-        id: Date.now(),
-        type: type || 'movie',
-        title: workName,
-        episode: workEpisode,
-        url: downloadUrl
-      };
-      mediaDatabase.unshift(newMediaItem);
-
-      await sendTelegramMessage(`✅ *تمت المعالجة بنجاح*\n🔗 *الرابط المباشر:* ${downloadUrl}`);
-
-      return res.json({ 
-        success: true, 
-        url: downloadUrl,
-        item: newMediaItem
-      });
-    } else {
-      return res.status(500).json({ success: false, message: 'فشل الرفع إلى تيليجرام' });
-    }
+    return res.json({ 
+      success: true, 
+      url: streamingUrl,
+      item: newMediaItem
+    });
 
   } catch (err) {
-    // تنظيف القرص في حال حدوث خطأ
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    
-    console.error('Telegram Upload Error:', err.response?.data || err.message);
+    console.error('Upload Error:', err);
     return res.status(500).json({ 
       success: false, 
-      message: err.response?.data?.description || 'حدث خطأ أثناء الرفع (قد يكون الملف متجاوزاً لحدود البوت المباشرة 50MB).' 
+      message: 'حدث خطأ أثناء الرفع إلى تيليجرام: ' + err.message 
     });
   }
 });
 
-// 2. مسار حفظ الفيديو برابط مباشر
+// 2. مسار بث وتدفق الفيديو المباشر
+app.get('/stream/:messageId', async (req, res) => {
+  try {
+    const messageId = parseInt(req.params.messageId);
+    const messages = await client.getMessages(CHAT_ID, { ids: [messageId] });
+    
+    if (!messages || !messages[0] || !messages[0].media) {
+      return res.status(404).send('الفيديو غير موجود');
+    }
+
+    res.setHeader('Content-Type', 'video/mp4');
+    const buffer = await client.downloadMedia(messages[0].media, {});
+    res.send(buffer);
+  } catch (err) {
+    console.error('Streaming Error:', err);
+    res.status(500).send('خطأ في تشغيل الملف');
+  }
+});
+
+// 3. مسار حفظ فيديو برابط مباشر
 app.post('/upload-video-url', async (req, res) => {
   try {
     const { url, title, type, episode } = req.body;
@@ -141,15 +142,13 @@ app.post('/upload-video-url', async (req, res) => {
     };
     mediaDatabase.unshift(newMediaItem);
 
-    await sendTelegramMessage(`📥 *إضافة رابط جديد للمكتبة*\n📌 *الاسم:* ${title}\n🔗 *الرابط:* ${url}`);
-
     res.json({ success: true, url: url, item: newMediaItem });
   } catch (err) {
     res.status(500).json({ success: false, message: 'حدث خطأ أثناء حفظ الرابط' });
   }
 });
 
-// 3. مسار API لجلب القائمة
+// 4. مسار جلب قائمة الأعمال
 app.get('/api/media-list', (req, res) => {
   res.json({
     success: true,
@@ -158,15 +157,13 @@ app.get('/api/media-list', (req, res) => {
   });
 });
 
-// 4. مسار API لتعديل عنصر
+// 5. مسار تعديل عنصر
 app.put('/api/media-update/:id', (req, res) => {
   const { id } = req.params;
   const { url, title, episode } = req.body;
   
   const item = mediaDatabase.find(m => m.id == id);
-  if (!item) {
-    return res.status(404).json({ success: false, message: 'العنصر غير موجود' });
-  }
+  if (!item) return res.status(404).json({ success: false, message: 'العنصر غير موجود' });
 
   if (url) item.url = url;
   if (title) item.title = title;
@@ -175,7 +172,7 @@ app.put('/api/media-update/:id', (req, res) => {
   res.json({ success: true, message: 'تم التحديث بنجاح', item });
 });
 
-// 5. مسار API لحذف عمل
+// 6. مسار حذف عنصر
 app.delete('/api/media-delete/:id', (req, res) => {
   const { id } = req.params;
   const initialLength = mediaDatabase.length;
@@ -191,23 +188,7 @@ app.delete('/api/media-delete/:id', (req, res) => {
 const PORT = process.env.PORT || 10000;
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  startKeepAlive();
 });
 
-server.timeout = 0; // إلغاء المهلة الزمنية لضمان عدم قطع الرفع للملفات الضخمة
+server.timeout = 0;
 server.keepAliveTimeout = 600000;
-
-// منع خمول السيرفر على Render
-function startKeepAlive() {
-  const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
-  if (!RENDER_URL) return;
-
-  setInterval(async () => {
-    try {
-      await axios.get(`${RENDER_URL}/api/media-list`);
-      console.log('Keep-alive ping sent.');
-    } catch (e) {
-      console.log('Keep-alive ping failed:', e.message);
-    }
-  }, 4 * 60 * 1000);
-}
