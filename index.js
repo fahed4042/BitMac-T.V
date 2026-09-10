@@ -10,6 +10,8 @@ const { StringSession } = require('telegram/sessions');
 const { NewMessage } = require('telegram/events');
 
 const app = express();
+const PORT = process.env.PORT || 10000;
+
 app.use(cors());
 app.use(express.json({ limit: '2000mb' }));
 app.use(express.urlencoded({ limit: '2000mb', extended: true }));
@@ -60,7 +62,6 @@ const client = new TelegramClient(stringSession, API_ID, API_HASH, {
         
         let messageIdToSave = message.id;
 
-        // إذا أُرسل الملف للبوت بالخاص، يتم توجيهه للـ CHAT_ID المحدد
         if (message.chatId && message.chatId.toString() !== CHAT_ID) {
             try {
                 const forwarded = await client.forwardMessages(CHAT_ID, {
@@ -241,7 +242,6 @@ app.delete('/api/folders/:id', (req, res) => {
   res.json({ success: true });
 });
 
-const PORT = process.env.PORT || 10000;
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
