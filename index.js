@@ -13,7 +13,7 @@ app.use(express.json({ limit: '2000mb' }));
 app.use(express.urlencoded({ limit: '2000mb', extended: true }));
 app.use(express.static('public'));
 
-// 1. استخدام التخزين المؤقت على القرص لمنع انهيار السيرفر (RAM Out of Memory)
+// 1. إعداد مجلد التخزين المؤقت على القرص لمنع استهلاك الرام (OOM)
 const uploadDir = path.join(__dirname, 'tmp_uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -26,23 +26,18 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 2000 * 1024 * 1024 } // 2 جيجابايت
+  limits: { fileSize: 2000 * 1024 * 1024 } // حد 2 جيجابايت للملف
 });
-
-const BOT_TOKEN = '8740811206:AAG29igXLxFAZ9XjPoGbfAVOVMMsDYbnZxo';
-const CHAT_ID = '1544455907'; 
-
-// تنبيه: لرفع ملفات أكبر من 50MB يجب ربطه بسيرفر Telegram Bot API محلي (أو تغيير الرابط)
-const TELEGRAM_API_URL = process.env.LOCAL_TELEGRAM_API || `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 let mediaDatabase = [];
 
+// 2. مسار الرفع السحابي المجاني عبر GoFile
 app.post('/upload-video', upload.single('video'), async (req, res) => {
-  req.setTimeout(1800000); // 30 دقيقة
+  req.setTimeout(1800000); // مهلة 30 دقيقة
   res.setTimeout(1800000);
 
   if (!req.file) {
-    return res.status(400).json({ success: false, message: 'لم يتم إرفاق أي فيديو' });
+    return res.status(400).json({ success: false, message: 'لم يتم اختيار فيديو' });
   }
 
   const filePath = req.file.path;
@@ -52,14 +47,22 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     const workName = title || 'بدون عنوان';
     const workEpisode = episode || '';
 
-    // 2. إرسال الملف عبر Stream لتوفير الذاكرة
-    const formData = new FormData();
-    formData.append('chat_id', CHAT_ID);
-    formData.append('video', fs.createReadStream(filePath));
-    formData.append('caption', `🎬 *تم رفع عمل جديد!*\n📌 *الاسم:* ${workName}\n📺 *النوع:* ${type === 'series' ? 'مسلسل' : 'فيلم'} ${workEpisode}`);
+    // أ) الحصول على أفضل سيرفر متاح من GoFile
+    const serverResponse = await axios.get('https://api.gofile.io/servers');
+    let targetServer = 'store1'; // سيرفر افتراضي
+    if (serverResponse.data && serverResponse.data.status === 'ok') {
+      const servers = serverResponse.data.data.servers;
+      if (servers && servers.length > 0) {
+        targetServer = servers[0].name;
+      }
+    }
 
-    const telegramResponse = await axios.post(
-      `${TELEGRAM_API_URL}/sendVideo`,
+    // ب) رفع الفيديو كـ Stream لتوفير الذاكرة العشوائية
+    const formData = new FormData();
+    formData.append('file', fs.createReadStream(filePath));
+
+    const gofileResponse = await axios.post(
+      `https://${targetServer}.gofile.io/contents/upload/file`,
       formData,
       {
         headers: formData.getHeaders(),
@@ -69,19 +72,9 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
       }
     );
 
-    if (telegramResponse.data && telegramResponse.data.ok) {
-      const result = telegramResponse.data.result;
-      const videoObj = result.video || result.document;
-      const fileId = videoObj.file_id;
-
-      // جلب مسار الملف
-      const fileRoute = await axios.get(`${TELEGRAM_API_URL}/getFile?file_id=${fileId}`);
-      const filePathOnTelegram = fileRoute.data.result.file_path;
-      
-      // رابط التحميل المباشر
-      const downloadUrl = TELEGRAM_API_URL.includes('localhost') 
-        ? `${TELEGRAM_API_URL}/file/bot${BOT_TOKEN}/${filePathOnTelegram}`
-        : `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePathOnTelegram}`;
+    if (gofileResponse.data && gofileResponse.data.status === 'ok') {
+      const resultData = gofileResponse.data.data;
+      const downloadUrl = resultData.downloadPage; // رابط صفحة التحميل أو تشغيل الفيديو
 
       const newMediaItem = {
         id: Date.now(),
@@ -90,18 +83,26 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
         episode: workEpisode,
         url: downloadUrl
       };
+
       mediaDatabase.unshift(newMediaItem);
 
-      return res.json({ success: true, url: downloadUrl, item: newMediaItem });
+      return res.json({
+        success: true,
+        url: downloadUrl,
+        item: newMediaItem
+      });
     } else {
-      return res.status(500).json({ success: false, message: 'فشل الرفع إلى تيليجرام' });
+      return res.status(500).json({ success: false, message: 'فشل الرفع إلى الخدمة السحابية' });
     }
 
   } catch (err) {
-    console.error('Upload Error:', err.message);
-    return res.status(500).json({ success: false, message: 'خطأ أثناء الرفع: ' + err.message });
+    console.error('Cloud Upload Error:', err.message);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'خطأ أثناء الرفع السحابي: ' + err.message 
+    });
   } finally {
-    // 3. حذف الملف المؤقت فور الانتهاء لتوفير مساحة السيرفر
+    // ج) حذف الملف المؤقت فوراً من السيرفر للحفاظ على المساحة
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
