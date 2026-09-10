@@ -3,16 +3,14 @@ const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const TelegramBot = require('node-telegram-bot-api');
 require('dotenv').config();
-
-const { TelegramClient } = require('telegram');
-const { StringSession } = require('telegram/sessions');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '2000mb' }));
 app.use(express.urlencoded({ limit: '2000mb', extended: true }));
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // إعداد مجلد التخزين المؤقت
 const uploadDir = path.join(__dirname, 'tmp');
@@ -27,34 +25,24 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 2000 * 1024 * 1024 } // حد الأقصى 2GB
+  limits: { fileSize: 2000 * 1024 * 1024 }
 });
 
-// المفاتيح مدمجة مباشرة
+// مفاتيح الاتصال
 const BOT_TOKEN = process.env.BOT_TOKEN || '8740811206:AAG29igXLxFAZ9XjPoGbfAVOVMMsDYbnZxo';
 const CHAT_ID = process.env.CHAT_ID || '1544455907';
-const API_ID = parseInt(process.env.API_ID || '33190715');
-const API_HASH = process.env.API_HASH || 'ced91cea20b517420df5f296117d67f3';
 
 let mediaDatabase = [];
 
-// تهيئة عميل Telegram MTProto
-const stringSession = new StringSession('');
-const client = new TelegramClient(stringSession, API_ID, API_HASH, {
-  connectionRetries: 5,
+// تهيئة البوت باستخدام Telegram Bot API المستقرة
+const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+
+// الصفحة الرئيسية
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-(async () => {
-  try {
-    console.log('جاري الاتصال ببروتوكول Telegram MTProto...');
-    await client.start({ botAuthToken: BOT_TOKEN });
-    console.log(`تم الاتصال بنجاح! جاهز لرفع الملفات حتى 2GB على CHAT_ID: ${CHAT_ID}`);
-  } catch (err) {
-    console.error('خطأ في الاتصال بتيليجرام:', err.message);
-  }
-})();
-
-// 1. مسار رفع الفيديو الضخم (حتى 2GB)
+// 1. مسار رفع الفيديو
 app.post('/upload-video', upload.single('video'), async (req, res) => {
   req.setTimeout(0);
   res.setTimeout(0);
@@ -69,15 +57,18 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
   const workEpisode = episode || '';
 
   try {
-    const result = await client.sendFile(CHAT_ID, {
-      file: filePath,
-      caption: `🎬 *تم رفع عمل جديد!*\n📌 *الاسم:* ${workName}\n📺 *النوع:* ${type === 'series' ? 'مسلسل' : 'فيلم'} ${workEpisode}`,
-      workers: 4,
+    const caption = `🎬 *تم رفع عمل جديد!*\n📌 *الاسم:* ${workName}\n📺 *النوع:* ${type === 'series' ? 'مسلسل' : 'فيلم'} ${workEpisode}`;
+    
+    // إرسال الفيديو لتيليجرام
+    const sentMessage = await bot.sendVideo(CHAT_ID, filePath, {
+      caption: caption,
+      parse_mode: 'Markdown'
     });
 
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-    const messageId = result.id;
+    const messageId = sentMessage.message_id;
+    const fileId = sentMessage.video ? sentMessage.video.file_id : null;
     const streamingUrl = `${req.protocol}://${req.get('host')}/stream/${messageId}`;
 
     const newMediaItem = {
@@ -86,7 +77,8 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
       title: workName,
       episode: workEpisode,
       url: streamingUrl,
-      messageId: messageId
+      messageId: messageId,
+      fileId: fileId
     };
     mediaDatabase.unshift(newMediaItem);
 
@@ -106,19 +98,19 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
   }
 });
 
-// 2. مسار بث وتدفق الفيديو المباشر
+// 2. مسار جلب وتحميل الفيديو للبث
 app.get('/stream/:messageId', async (req, res) => {
   try {
     const messageId = parseInt(req.params.messageId);
-    const messages = await client.getMessages(CHAT_ID, { ids: [messageId] });
-    
-    if (!messages || !messages[0] || !messages[0].media) {
-      return res.status(404).send('الفيديو غير موجود');
+    const mediaItem = mediaDatabase.find(m => m.messageId === messageId);
+
+    if (!mediaItem || !mediaItem.fileId) {
+      return res.status(404).send('الفيديو غير موجود في قاعدة البيانات');
     }
 
+    const stream = bot.getFileStream(mediaItem.fileId);
     res.setHeader('Content-Type', 'video/mp4');
-    const buffer = await client.downloadMedia(messages[0].media, {});
-    res.send(buffer);
+    stream.pipe(res);
   } catch (err) {
     console.error('Streaming Error:', err);
     res.status(500).send('خطأ في تشغيل الملف');
