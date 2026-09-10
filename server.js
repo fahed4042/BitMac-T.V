@@ -18,13 +18,14 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-app.use(express.static('public'));
+// تقديم الملفات الثابتة من مجلد public
+app.use(express.static(path.join(__dirname, 'public')));
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const safeName = file.originalname.replace(/\s+/g, '_');
+    const safeName = file.originalname ? file.originalname.replace(/\s+/g, '_') : 'video.mp4';
     cb(null, `${uniqueSuffix}-${safeName}`);
   }
 });
@@ -48,23 +49,23 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     const workName = title || 'بدون عنوان';
     const workEpisode = episode || '';
 
+    console.log(`[رفع] جاري رفع الملف: ${workName} إلى Catbox...`);
+
     const form = new FormData();
     form.append('reqtype', 'upload-file');
     form.append('fileToUpload', fs.createReadStream(filePath));
 
     const catboxRes = await axios.post('https://catbox.moe/user/api.php', form, {
-      headers: {
-        ...form.getHeaders()
-      },
+      headers: { ...form.getHeaders() },
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
-      timeout: 600000
+      timeout: 120000 // 2 minutes timeout
     });
 
     const directUrl = catboxRes.data ? catboxRes.data.trim() : '';
 
     if (!directUrl || !directUrl.startsWith('http')) {
-      throw new Error('فشل الحصول على رابط مباشر من Catbox');
+      throw new Error('فشل الحصول على رابط مباشر صالح من Catbox');
     }
 
     if (fs.existsSync(filePath)) {
@@ -81,6 +82,7 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     };
 
     mediaDatabase.unshift(newMediaItem);
+    console.log(`[نجاح] تمت إضافة العمل: ${workName}`);
 
     res.json({ 
       success: true, 
@@ -92,7 +94,10 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
       try { fs.unlinkSync(filePath); } catch(e) {}
     }
     console.error('Catbox Upload Error:', err.message);
-    res.status(500).json({ success: false, message: 'خطأ أثناء الرفع لـ Catbox: ' + (err.response?.data || err.message) });
+    res.status(500).json({ 
+      success: false, 
+      message: 'خطأ أثناء الرفع: ' + (err.response?.data || err.message) 
+    });
   }
 });
 
@@ -115,7 +120,7 @@ app.post('/upload-video-url', (req, res) => {
 
     res.json({ success: true, url: url, item: newMediaItem });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'حدث خطأ' });
+    res.status(500).json({ success: false, message: 'حدث خطأ داخلي' });
   }
 });
 
@@ -145,5 +150,5 @@ app.delete('/api/media-delete/:id', (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-server.timeout = 600000;
-server.keepAliveTimeout = 600000;
+server.timeout = 120000;
+server.keepAliveTimeout = 120000;
