@@ -10,13 +10,12 @@ const { StringSession } = require('telegram/sessions');
 const { NewMessage } = require('telegram/events');
 
 const app = express();
-const PORT = process.env.PORT || 10000;
-
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.json({ limit: '2000mb' }));
+app.use(express.urlencoded({ limit: '2000mb', extended: true }));
 app.use(express.static('public'));
 
+// إعداد مجلد التخزين المؤقت
 const uploadDir = path.join(__dirname, 'tmp');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -27,7 +26,10 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 
-const upload = multer({ storage: storage });
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 2000 * 1024 * 1024 }
+});
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '8740811206:AAG29igXLxFAZ9XjPoGbfAVOVMMsDYbnZxo';
 const CHAT_ID = process.env.CHAT_ID || '1544455907';
@@ -35,8 +37,8 @@ const API_ID = parseInt(process.env.API_ID || '33190715');
 const API_HASH = process.env.API_HASH || 'ced91cea20b517420df5f296117d67f3';
 
 let mediaDatabase = [];
-let foldersDatabase = [{ id: 'gen', name: 'المجلد العام' }];
 
+// تهيئة عميل Telegram
 const stringSession = new StringSession('');
 const client = new TelegramClient(stringSession, API_ID, API_HASH, {
   connectionRetries: 5,
@@ -46,30 +48,31 @@ const client = new TelegramClient(stringSession, API_ID, API_HASH, {
   try {
     console.log('جاري الاتصال ببروتوكول Telegram MTProto...');
     await client.start({ botAuthToken: BOT_TOKEN });
-    console.log('تم الاتصال بنجاح! السيرفر جاهز استقبال الملفات.');
+    console.log(`تم الاتصال بنجاح! جاهز لرفع الملفات حتى 2GB على CHAT_ID: ${CHAT_ID}`);
 
+    // --- استقبال أي فيديو يرسل في تيليجرام وتضمينه فوراً في التطبيق ---
     client.addEventHandler(async (event) => {
       const message = event.message;
-      if (message && message.media) {
-        console.log('تم استقبال ملف جديد من تيليجرام!');
+      if (message && message.media && (message.video || message.document)) {
+        const messageId = message.id;
+        const caption = message.text || 'فيديو من تيليجرام';
         
-        let messageIdToSave = message.id;
-
-        const host = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-        const streamingUrl = `${host}/stream/${messageIdToSave}`;
-        
-        const newMediaItem = {
-          id: Date.now(),
-          folderId: 'gen',
-          type: 'movie',
-          title: message.message || 'فيديو جديد من تيليجرام',
-          episode: '',
-          url: streamingUrl,
-          messageId: messageIdToSave
-        };
-        
-        mediaDatabase.unshift(newMediaItem);
-        console.log('تم إضافة الفيديو بنجاح للمكتبة!');
+        // التحقق من أن الفيديو غير مضاف سابقاً
+        const exists = mediaDatabase.some(m => m.messageId === messageId);
+        if (!exists) {
+          const streamingUrl = `https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'bitmac-t-v.onrender.com'}/stream/${messageId}`;
+          const newMediaItem = {
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            type: caption.includes('مسلسل') ? 'series' : 'movie',
+            title: caption.replace(/(🎬|📌|📺|\*|تم رفع عمل جديد!|الاسم:|النوع:)/g, '').trim() || `فيديو ${messageId}`,
+            episode: '',
+            url: streamingUrl,
+            messageId: messageId,
+            folderId: 'gen' // يوضع تلقائياً في المجلد العام
+          };
+          mediaDatabase.unshift(newMediaItem);
+          console.log(`تم التقاط فيديو جديد من تيليجرام: ${newMediaItem.title}`);
+        }
       }
     }, new NewMessage({ chats: [CHAT_ID] }));
 
@@ -78,7 +81,11 @@ const client = new TelegramClient(stringSession, API_ID, API_HASH, {
   }
 })();
 
+// 1. مسار رفع الفيديو الضخم
 app.post('/upload-video', upload.single('video'), async (req, res) => {
+  req.setTimeout(0);
+  res.setTimeout(0);
+
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'لم يتم إرفاق أي فيديو' });
   }
@@ -92,23 +99,22 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     const result = await client.sendFile(CHAT_ID, {
       file: filePath,
       caption: `🎬 *تم رفع عمل جديد!*\n📌 *الاسم:* ${workName}\n📺 *النوع:* ${type === 'series' ? 'مسلسل' : 'فيلم'} ${workEpisode}`,
-      workers: 1,
+      workers: 4,
     });
 
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
     const messageId = result.id;
-    const host = process.env.RENDER_EXTERNAL_URL || `${req.protocol}://${req.get('host')}`;
-    const streamingUrl = `${host}/stream/${messageId}`;
+    const streamingUrl = `${req.protocol}://${req.get('host')}/stream/${messageId}`;
 
     const newMediaItem = {
       id: Date.now(),
-      folderId: folderId || 'gen',
       type: type || 'movie',
       title: workName,
       episode: workEpisode,
       url: streamingUrl,
-      messageId: messageId
+      messageId: messageId,
+      folderId: folderId || 'gen'
     };
     mediaDatabase.unshift(newMediaItem);
 
@@ -128,6 +134,7 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
   }
 });
 
+// 2. مسار بث وتدفق الفيديو المباشر
 app.get('/stream/:messageId', async (req, res) => {
   try {
     const messageId = parseInt(req.params.messageId);
@@ -146,6 +153,7 @@ app.get('/stream/:messageId', async (req, res) => {
   }
 });
 
+// 3. مسار حفظ فيديو برابط مباشر
 app.post('/upload-video-url', async (req, res) => {
   try {
     const { url, title, type, episode, folderId } = req.body;
@@ -155,11 +163,11 @@ app.post('/upload-video-url', async (req, res) => {
 
     const newMediaItem = {
       id: Date.now(),
-      folderId: folderId || 'gen',
       type: type || 'movie',
       title: title,
       episode: episode || '',
-      url: url
+      url: url,
+      folderId: folderId || 'gen'
     };
     mediaDatabase.unshift(newMediaItem);
 
@@ -169,10 +177,16 @@ app.post('/upload-video-url', async (req, res) => {
   }
 });
 
+// 4. مسار جلب قائمة الأعمال
 app.get('/api/media-list', (req, res) => {
-  res.json({ success: true, total: mediaDatabase.length, data: mediaDatabase });
+  res.json({
+    success: true,
+    total: mediaDatabase.length,
+    data: mediaDatabase
+  });
 });
 
+// 5. مسار تعديل عنصر ونقله بين المجلدات
 app.put('/api/media-update/:id', (req, res) => {
   const { id } = req.params;
   const { url, title, episode, folderId } = req.body;
@@ -180,39 +194,31 @@ app.put('/api/media-update/:id', (req, res) => {
   const item = mediaDatabase.find(m => m.id == id);
   if (!item) return res.status(404).json({ success: false, message: 'العنصر غير موجود' });
 
-  if (url) item.url = url;
-  if (title) item.title = title;
+  if (url !== undefined) item.url = url;
+  if (title !== undefined) item.title = title;
   if (episode !== undefined) item.episode = episode;
-  if (folderId) item.folderId = folderId;
+  if (folderId !== undefined) item.folderId = folderId;
 
   res.json({ success: true, message: 'تم التحديث بنجاح', item });
 });
 
+// 6. مسار حذف عنصر
 app.delete('/api/media-delete/:id', (req, res) => {
   const { id } = req.params;
+  const initialLength = mediaDatabase.length;
   mediaDatabase = mediaDatabase.filter(m => m.id != id);
+
+  if (mediaDatabase.length === initialLength) {
+    return res.status(404).json({ success: false, message: 'العنصر غير موجود' });
+  }
+
   res.json({ success: true, message: 'تم الحذف بنجاح' });
 });
 
-app.get('/api/folders', (req, res) => {
-  res.json({ success: true, data: foldersDatabase });
-});
-
-app.post('/api/folders', (req, res) => {
-  const { name } = req.body;
-  if (!name) return res.status(400).json({ success: false });
-  const newFolder = { id: 'f_' + Date.now(), name };
-  foldersDatabase.push(newFolder);
-  res.json({ success: true, folder: newFolder });
-});
-
-app.delete('/api/folders/:id', (req, res) => {
-  const { id } = req.params;
-  foldersDatabase = foldersDatabase.filter(f => f.id !== id);
-  mediaDatabase.forEach(m => { if (m.folderId === id) m.folderId = 'gen'; });
-  res.json({ success: true });
-});
-
-app.listen(PORT, () => {
+const PORT = process.env.PORT || 10000;
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+server.timeout = 0;
+server.keepAliveTimeout = 600000;
