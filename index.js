@@ -9,7 +9,7 @@ require('dotenv').config();
 
 const app = express();
 
-// مفتاح API الخاص بك من GoFile
+// مفتاح API الخاص بك
 const GOFILE_TOKEN = process.env.GOFILE_TOKEN || 'IDiI86XL4WCWd0tt0kJz4Tqa9Zab3qGU';
 
 app.use(cors());
@@ -17,7 +17,7 @@ app.use(express.json({ limit: '2000mb' }));
 app.use(express.urlencoded({ limit: '2000mb', extended: true }));
 app.use(express.static('public'));
 
-// مجلد التخزين المؤقت على القرص لمنع استهلاك الرام
+// مجلد التخزين المؤقت
 const uploadDir = path.join(__dirname, 'tmp_uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -35,14 +35,31 @@ const upload = multer({
 
 let mediaDatabase = [];
 
-// مسار جلب قائمة الميديا المضافة (للربط والتطبيقات)
 app.get('/api/media-list', (req, res) => {
   res.json({ success: true, count: mediaDatabase.length, data: mediaDatabase });
 });
 
-// مسار الرفع السحابي عبر GoFile
+// دالة جلب سيرفر فعال وموثوق من GoFile
+async function getGoFileServer() {
+  try {
+    const res = await axios.get('https://api.gofile.io/servers', {
+      headers: { Authorization: `Bearer ${GOFILE_TOKEN}` },
+      timeout: 10000
+    });
+    if (res.data && res.data.status === 'ok') {
+      const servers = res.data.data?.servers;
+      if (servers && servers.length > 0) {
+        return servers[0].name; // يرجع اسم السيرفر النشط مثل store2, store3 ...
+      }
+    }
+  } catch (e) {
+    console.error('Failed to fetch active server, using direct fallback:', e.message);
+  }
+  return 'api'; // fallback سيرفر رئيسي في حال فشل الاستعلام
+}
+
 app.post('/upload-video', upload.single('video'), async (req, res) => {
-  req.setTimeout(1800000); // 30 دقيقة
+  req.setTimeout(1800000);
   res.setTimeout(1800000);
 
   if (!req.file) {
@@ -56,25 +73,23 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     const workName = title || 'بدون عنوان';
     const workEpisode = episode || '';
 
-    // 1. الحصول على أفضل سيرفر متاح باستخدام مفتاح API
-    const serverResponse = await axios.get('https://api.gofile.io/servers', {
-      headers: { Authorization: `Bearer ${GOFILE_TOKEN}` }
-    });
+    // 1. جلب السيرفر الشغال حالياً
+    const targetServer = await getGoFileServer();
 
-    let targetServer = 'store1';
-    if (serverResponse.data && serverResponse.data.status === 'ok') {
-      const servers = serverResponse.data.data.servers;
-      if (servers && servers.length > 0) {
-        targetServer = servers[0].name;
-      }
-    }
-
-    // 2. رفع الفيديو مع التوكين لربطه بحسابك وتجنب خطأ 404
+    // 2. تجهيز البيانات وتمرير التوكين داخل Form Data
     const formData = new FormData();
+    formData.append('token', GOFILE_TOKEN);
     formData.append('file', fs.createReadStream(filePath));
 
+    // اختيار رابط الرفع الصحيح بناءً على السيرفر المسترجع
+    const uploadUrl = targetServer === 'api' 
+      ? `https://api.gofile.io/contents/upload/file`
+      : `https://${targetServer}.gofile.io/contents/upload/file`;
+
+    console.log(`Uploading to: ${uploadUrl}`);
+
     const gofileResponse = await axios.post(
-      `https://${targetServer}.gofile.io/contents/upload/file`,
+      uploadUrl,
       formData,
       {
         headers: {
@@ -120,14 +135,12 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
       message: 'خطأ أثناء الرفع السحابي: ' + (err.response?.data?.message || err.message) 
     });
   } finally {
-    // حذف الملف المؤقت فوراً للحفاظ على القرص
     if (fs.existsSync(filePath)) {
       try { fs.unlinkSync(filePath); } catch (e) {}
     }
   }
 });
 
-// مسار السحب عبر رابط مباشر
 app.post('/upload-video-url', (req, res) => {
   const { url, title } = req.body;
   if (!url || !title) {
@@ -144,11 +157,7 @@ app.post('/upload-video-url', (req, res) => {
 
   mediaDatabase.unshift(newMediaItem);
 
-  return res.json({
-    success: true,
-    url: url,
-    item: newMediaItem
-  });
+  return res.json({ success: true, url: url, item: newMediaItem });
 });
 
 const PORT = process.env.PORT || 10000;
