@@ -12,18 +12,15 @@ app.use(express.static('public'));
 // استخدام الذاكرة المؤقتة لحفظ الملف مؤقتاً قبل إرساله لتيليجرام
 const upload = multer({ storage: multer.memoryStorage() });
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8291407370:AAHmsWnlw6IlIP5AKi1WwPw3nVblVB9OAoo';
-// ضع هنا معرف الشات أو القناة التي تريد أن تُرسل إليها الفيديوهات (Chat ID)
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID; 
+// التوكن الجديد الخاص ببوتك
+const BOT_TOKEN = '8740811206:AAG29igXLxFAZ9XjPoGbfAVOVMMsDYbnZxo';
+// الـ Chat ID الخاص بك
+const CHAT_ID = '1544455907'; 
 
 app.post('/upload-video', upload.single('video'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'لم يتم إرفاق أي فيديو' });
-    }
-
-    if (!CHAT_ID) {
-      return res.status(500).json({ success: false, message: 'يجيب تحديد TELEGRAM_CHAT_ID في متغيرات البيئة' });
     }
 
     // إعداد البيانات لإرسالها لتيليجرام
