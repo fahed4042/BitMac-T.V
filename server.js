@@ -12,7 +12,6 @@ app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
 app.use(express.static('public'));
 
-// إنشاء مجلد مؤقت لتخزين الملفات أثناء الرفع لحماية الذاكرة
 const uploadDir = path.join(__dirname, 'tmp');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -25,15 +24,14 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 2000 * 1024 * 1024 } // دعم ملفات حتى 2 جيجابايت
+  limits: { fileSize: 2000 * 1024 * 1024 } // دعم حتى 2 جيجابايت
 });
 
-// مصفوفة لتخزين الأفلام والمسلسلات في الذاكرة
 let mediaDatabase = [];
 
-// 1. مسار رفع الفيديو وتوجيهه مباشرة إلى Archive.org
+// مسار رفع الفيديو وتوجيهه مباشرة إلى Archive.org مع تحديد حجم الملف لتجنب خطأ 411
 app.post('/upload-video', upload.single('video'), async (req, res) => {
-  req.setTimeout(600000); // 10 دقائق مهلة
+  req.setTimeout(600000);
   res.setTimeout(600000);
 
   if (!req.file) {
@@ -41,40 +39,41 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
   }
 
   const filePath = req.file.path;
-  const { title, type, episode } = req.body;
+  const { title, type, episode, folderId } = req.body;
   const workName = title || 'بدون عنوان';
   const workEpisode = episode || '';
 
-  // إنشاء معرف فريد وآمن لـ Archive.org (يجب أن يكون بحروف إنجليزية صغيرة وأرقام)
   const safeIdentifier = `bitmac-tv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const fileName = req.file.originalname.replace(/\s+/g, '_');
   const archiveUploadUrl = `https://s3.us.archive.org/${safeIdentifier}/${fileName}`;
 
   try {
+    const stats = fs.statSync(filePath);
+    const fileSize = stats.size;
     const fileStream = fs.createReadStream(filePath);
 
-    // الرفع المباشر إلى Archive.org عبر S3 API
+    // رفع مباشر مع تمرير Content-Length لتجاوز مشكلة 411
     await axios.put(archiveUploadUrl, fileStream, {
       headers: {
         'Authorization': `LOW ${process.env.ARCHIVE_ACCESS_KEY}:${process.env.ARCHIVE_SECRET_KEY}`,
-        'x-archive-auto-make-bucket': '1', // إنشاء المجلد تلقائياً على الأرشيف
-        'Content-Type': req.file.mimetype || 'video/mp4'
+        'x-archive-auto-make-bucket': '1',
+        'Content-Type': req.file.mimetype || 'video/mp4',
+        'Content-Length': fileSize
       },
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
-      timeout: 540000 // 9 دقائق
+      timeout: 540000
     });
 
-    // حذف الملف المؤقت من سيرفر Render لتوفير المساحة
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
 
-    // الرابط المباشر للتشغيل والتحميل من Archive.org
     const directUrl = `https://archive.org/download/${safeIdentifier}/${fileName}`;
 
     const newMediaItem = {
-      id: Date.now(),
+      id: Date.now().toString(),
+      folderId: folderId || 'gen',
       type: type || 'movie',
       title: workName,
       episode: workEpisode,
@@ -89,28 +88,28 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     });
 
   } catch (err) {
-    // تنظيف الملف المؤقت في حال حدوث خطأ
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
     console.error('Archive Upload Error:', err.response?.data || err.message);
     return res.status(500).json({ 
       success: false, 
-      message: 'فشل الرفع إلى الأرشيف: تأكد من صحة مفاتيح Archive.org S3 Keys.' 
+      message: 'فشل الرفع إلى الأرشيف: تأكد من مفاتيح S3 Keys في متغيرات البيئة.' 
     });
   }
 });
 
-// 2. مسار إضافي لحفظ رابط مباشر جاهز
+// مسار حفظ رابط خارجي مباشر
 app.post('/upload-video-url', async (req, res) => {
   try {
-    const { url, title, type, episode } = req.body;
+    const { url, title, type, episode, folderId } = req.body;
     if (!url || !title) {
       return res.status(400).json({ success: false, message: 'الرابط والاسم مطلوبان' });
     }
 
     const newMediaItem = {
-      id: Date.now(),
+      id: Date.now().toString(),
+      folderId: folderId || 'gen',
       type: type || 'movie',
       title: title,
       episode: episode || '',
@@ -124,7 +123,7 @@ app.post('/upload-video-url', async (req, res) => {
   }
 });
 
-// 3. مسار API لجلب قائمة المحتوى لتطبيقاتك
+// جلب قائمة الوسائط
 app.get('/api/media-list', (req, res) => {
   res.json({
     success: true,
@@ -133,7 +132,25 @@ app.get('/api/media-list', (req, res) => {
   });
 });
 
-// 4. مسار حذف عنصر
+// تعديل بيانات العنصر (مثل النقل لمجلد آخر أو تعديل الاسم)
+app.put('/api/media-update/:id', (req, res) => {
+  const { id } = req.params;
+  const { url, title, episode, folderId } = req.body;
+  
+  const item = mediaDatabase.find(m => m.id == id);
+  if (!item) {
+    return res.status(404).json({ success: false, message: 'العنصر غير موجود' });
+  }
+
+  if (url) item.url = url;
+  if (title) item.title = title;
+  if (episode !== undefined) item.episode = episode;
+  if (folderId) item.folderId = folderId;
+
+  res.json({ success: true, message: 'تم التحديث بنجاح', item });
+});
+
+// حذف عنصر
 app.delete('/api/media-delete/:id', (req, res) => {
   const { id } = req.params;
   mediaDatabase = mediaDatabase.filter(m => m.id != id);
