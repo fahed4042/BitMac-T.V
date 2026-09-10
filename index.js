@@ -7,6 +7,7 @@ require('dotenv').config();
 
 const { TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
+const { NewMessage } = require('telegram/events');
 
 const app = express();
 app.use(cors());
@@ -27,18 +28,19 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 2000 * 1024 * 1024 } // حد الأقصى 2GB
+  limits: { fileSize: 2000 * 1024 * 1024 }
 });
 
-// المفاتيح مدمجة مباشرة
+// المفاتيح
 const BOT_TOKEN = process.env.BOT_TOKEN || '8740811206:AAG29igXLxFAZ9XjPoGbfAVOVMMsDYbnZxo';
 const CHAT_ID = process.env.CHAT_ID || '1544455907';
 const API_ID = parseInt(process.env.API_ID || '33190715');
 const API_HASH = process.env.API_HASH || 'ced91cea20b517420df5f296117d67f3';
 
+// قواعد البيانات المؤقتة بالذاكرة
 let mediaDatabase = [];
+let foldersDatabase = [{ id: 'gen', name: 'المجلد العام' }];
 
-// تهيئة عميل Telegram MTProto
 const stringSession = new StringSession('');
 const client = new TelegramClient(stringSession, API_ID, API_HASH, {
   connectionRetries: 5,
@@ -48,13 +50,55 @@ const client = new TelegramClient(stringSession, API_ID, API_HASH, {
   try {
     console.log('جاري الاتصال ببروتوكول Telegram MTProto...');
     await client.start({ botAuthToken: BOT_TOKEN });
-    console.log(`تم الاتصال بنجاح! جاهز لرفع الملفات حتى 2GB على CHAT_ID: ${CHAT_ID}`);
+    console.log(`تم الاتصال بنجاح! السيرفر جاهز استقبال الملفات.`);
+
+    // مراقبة أي ملف يتم إرساله للبوت تلقائياً
+    client.addEventHandler(async (event) => {
+      const message = event.message;
+      if (message && message.media) {
+        console.log('تم استقبال ملف جديد من تيليجرام!');
+        
+        let messageIdToSave = message.id;
+
+        // إذا أُرسل الملف للبوت بالخاص، يتم توجيهه للـ CHAT_ID المحدد
+        if (message.chatId && message.chatId.toString() !== CHAT_ID) {
+            try {
+                const forwarded = await client.forwardMessages(CHAT_ID, {
+                    messages: [message.id],
+                    fromPeer: message.chatId
+                });
+                if (forwarded && forwarded[0]) {
+                  messageIdToSave = forwarded[0].id;
+                }
+            } catch (e) {
+                console.log('ملاحظة أثناء توجيه الملف:', e.message);
+            }
+        }
+
+        const host = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+        const streamingUrl = `${host}/stream/${messageIdToSave}`;
+        
+        const newMediaItem = {
+          id: Date.now(),
+          folderId: 'gen',
+          type: 'movie',
+          title: message.message || 'فيديو جديد من تيليجرام',
+          episode: '',
+          url: streamingUrl,
+          messageId: messageIdToSave
+        };
+        
+        mediaDatabase.unshift(newMediaItem);
+        console.log('تم إضافة الفيديو بنجاح للمكتبة!');
+      }
+    }, new NewMessage({}));
+
   } catch (err) {
     console.error('خطأ في الاتصال بتيليجرام:', err.message);
   }
 })();
 
-// 1. مسار رفع الفيديو الضخم (حتى 2GB)
+// 1. مسار رفع الفيديو من الموقع
 app.post('/upload-video', upload.single('video'), async (req, res) => {
   req.setTimeout(0);
   res.setTimeout(0);
@@ -64,7 +108,7 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
   }
 
   const filePath = req.file.path;
-  const { title, type, episode } = req.body;
+  const { title, type, episode, folderId } = req.body;
   const workName = title || 'بدون عنوان';
   const workEpisode = episode || '';
 
@@ -78,10 +122,12 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
     const messageId = result.id;
-    const streamingUrl = `${req.protocol}://${req.get('host')}/stream/${messageId}`;
+    const host = `${req.protocol}://${req.get('host')}`;
+    const streamingUrl = `${host}/stream/${messageId}`;
 
     const newMediaItem = {
       id: Date.now(),
+      folderId: folderId || 'gen',
       type: type || 'movie',
       title: workName,
       episode: workEpisode,
@@ -106,7 +152,7 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
   }
 });
 
-// 2. مسار بث وتدفق الفيديو المباشر
+// 2. مسار البث المباشر
 app.get('/stream/:messageId', async (req, res) => {
   try {
     const messageId = parseInt(req.params.messageId);
@@ -128,13 +174,14 @@ app.get('/stream/:messageId', async (req, res) => {
 // 3. مسار حفظ فيديو برابط مباشر
 app.post('/upload-video-url', async (req, res) => {
   try {
-    const { url, title, type, episode } = req.body;
+    const { url, title, type, episode, folderId } = req.body;
     if (!url || !title) {
       return res.status(400).json({ success: false, message: 'الرابط والاسم مطلوبان' });
     }
 
     const newMediaItem = {
       id: Date.now(),
+      folderId: folderId || 'gen',
       type: type || 'movie',
       title: title,
       episode: episode || '',
@@ -148,19 +195,14 @@ app.post('/upload-video-url', async (req, res) => {
   }
 });
 
-// 4. مسار جلب قائمة الأعمال
+// 4. API الميديا (جلب، تعديل، حذف)
 app.get('/api/media-list', (req, res) => {
-  res.json({
-    success: true,
-    total: mediaDatabase.length,
-    data: mediaDatabase
-  });
+  res.json({ success: true, total: mediaDatabase.length, data: mediaDatabase });
 });
 
-// 5. مسار تعديل عنصر
 app.put('/api/media-update/:id', (req, res) => {
   const { id } = req.params;
-  const { url, title, episode } = req.body;
+  const { url, title, episode, folderId } = req.body;
   
   const item = mediaDatabase.find(m => m.id == id);
   if (!item) return res.status(404).json({ success: false, message: 'العنصر غير موجود' });
@@ -168,21 +210,35 @@ app.put('/api/media-update/:id', (req, res) => {
   if (url) item.url = url;
   if (title) item.title = title;
   if (episode !== undefined) item.episode = episode;
+  if (folderId) item.folderId = folderId;
 
   res.json({ success: true, message: 'تم التحديث بنجاح', item });
 });
 
-// 6. مسار حذف عنصر
 app.delete('/api/media-delete/:id', (req, res) => {
   const { id } = req.params;
-  const initialLength = mediaDatabase.length;
   mediaDatabase = mediaDatabase.filter(m => m.id != id);
-
-  if (mediaDatabase.length === initialLength) {
-    return res.status(404).json({ success: false, message: 'العنصر غير موجود' });
-  }
-
   res.json({ success: true, message: 'تم الحذف بنجاح' });
+});
+
+// 5. API المجلدات (جلب، إضافة، حذف)
+app.get('/api/folders', (req, res) => {
+  res.json({ success: true, data: foldersDatabase });
+});
+
+app.post('/api/folders', (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ success: false });
+  const newFolder = { id: 'f_' + Date.now(), name };
+  foldersDatabase.push(newFolder);
+  res.json({ success: true, folder: newFolder });
+});
+
+app.delete('/api/folders/:id', (req, res) => {
+  const { id } = req.params;
+  foldersDatabase = foldersDatabase.filter(f => f.id !== id);
+  mediaDatabase.forEach(m => { if (m.folderId === id) m.folderId = 'gen'; });
+  res.json({ success: true });
 });
 
 const PORT = process.env.PORT || 10000;
