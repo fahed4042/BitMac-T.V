@@ -8,11 +8,11 @@ require('dotenv').config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '500mb' }));
-app.use(express.urlencoded({ limit: '500mb', extended: true }));
+// رفع حدود استقبال البيانات لتتناسب مع الفيديوهات الضخمة
+app.use(express.json({ limit: '2000mb' }));
+app.use(express.urlencoded({ limit: '2000mb', extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// إعداد مجلد التخزين المؤقت
 const uploadDir = path.join(__dirname, 'tmp');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -25,36 +25,65 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 50 * 1024 * 1024 } 
+  limits: { fileSize: 2000 * 1024 * 1024 } // دعم أحجام تصل إلى 2 جيجابايت
 });
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '8740811206:AAG29igXLxFAZ9XjPoGbfAVOVMMsDYbnZxo';
-const CHAT_ID = process.env.CHAT_ID || '1544455907';
+const OWNER_ID = process.env.OWNER_ID || '1544455907'; // معرف التيليجرام الخاص بك للحماية
 
 let mediaDatabase = [];
 
-// تهيئة بوت واحد متكامل للرفع والاستقبال والتشغيل بوضع polling
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// استقبال الرسائل واستخراج الروابط المباشرة تلقائياً
+// نظام ذكي للتعامل مع الصور والفيديوهات بأي حجم مع حماية المالك
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
-  const videoObj = msg.video || (msg.document && msg.document.mime_type && msg.document.mime_type.includes('video') ? msg.document : null);
+  const userId = msg.from.id.toString();
 
-  if (videoObj) {
-    try {
-      const fileLink = await bot.getFileLink(videoObj.file_id);
-      await bot.sendMessage(chatId, `✅ **الرابط المباشر:**\n\n\`${fileLink}\``, {
-        parse_mode: 'Markdown'
-      });
-    } catch (err) {
-      console.error('Telegram Bot Error:', err);
-      await bot.sendMessage(chatId, 'حدث خطأ أثناء استخراج الرابط المباشر.');
+  // الحماية: التحقق من أن المرسل هو أنت فقط
+  if (userId !== OWNER_ID) {
+    return bot.sendMessage(chatId, '❌ عذراً، هذا البوت خاص ولا يمكنك استخدامه.');
+  }
+
+  const isPhoto = msg.photo && msg.photo.length > 0;
+  const isVideo = msg.video || (msg.document && msg.document.mime_type && msg.document.mime_type.includes('video'));
+
+  if (!isPhoto && !isVideo) return;
+
+  const mediaTypeName = isPhoto ? 'الصورة' : 'الفيديو (بجودة كاملة وحجم كبير)';
+  
+  // رسالة تفاعلية فورية
+  const statusMsg = await bot.sendMessage(chatId, `⏳ جاري معالجة واستخراج الرابط المباشر لـ ${mediaTypeName}...`);
+
+  try {
+    let fileId;
+    if (isPhoto) {
+      fileId = msg.photo[msg.photo.length - 1].file_id;
+    } else {
+      fileId = msg.video ? msg.video.file_id : msg.document.file_id;
     }
+
+    const fileLink = await bot.getFileLink(fileId);
+
+    // تحديث الرسالة بالرابط المباشر بعد الانتهاء
+    await bot.editMessageText(
+      `✅ **تم استخراج رابط الـ ${mediaTypeName} بنجاح:**\n\n\`${fileLink}\``,
+      {
+        chat_id: chatId,
+        message_id: statusMsg.message_id,
+        parse_mode: 'Markdown'
+      }
+    );
+  } catch (err) {
+    console.error('Bot Error:', err);
+    await bot.editMessageText('❌ حدث خطأ أثناء معالجة الملف الكبير.', {
+      chat_id: chatId,
+      message_id: statusMsg.message_id
+    });
   }
 });
 
-// مسار لمنع السيرفر من النوم
+// مسار لمنع السيرفر من النوم عبر UptimeRobot
 app.get('/ping', (req, res) => {
   res.status(200).send('Server is awake!');
 });
@@ -63,13 +92,13 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// 1. مسار رفع الفيديو عبر السيرفر
+// 1. مسار رفع الفيديوهات الكبيرة عبر السيرفر
 app.post('/upload-video', upload.single('video'), async (req, res) => {
   req.setTimeout(0);
   res.setTimeout(0);
 
   if (!req.file) {
-    return res.status(400).json({ success: false, message: 'لم يتم إرفاق أي فيديو أو أن حجمه يتجاوز 50 ميجا' });
+    return res.status(400).json({ success: false, message: 'لم يتم إرفاق أي فيديو' });
   }
 
   const filePath = req.file.path;
@@ -80,7 +109,7 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
   try {
     const caption = `🎬 *تم رفع عمل جديد!*\n📌 *الاسم:* ${workName}\n📺 *النوع:* ${type === 'series' ? 'مسلسل' : 'فيلم'} ${workEpisode}`;
     
-    const sentMessage = await bot.sendVideo(CHAT_ID, filePath, {
+    const sentMessage = await bot.sendVideo(OWNER_ID, filePath, {
       caption: caption,
       parse_mode: 'Markdown'
     }, { contentType: 'video/mp4' });
@@ -113,12 +142,12 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     console.error('Upload Error:', err.response ? err.response.body : err.message);
     return res.status(500).json({ 
       success: false, 
-      message: 'حدث خطأ، تأكد أن حجم الفيديو لا يتجاوز 50 ميجابايت.' 
+      message: 'حدث خطأ أثناء الرفع: ' + err.message 
     });
   }
 });
 
-// 2. مسار جلب وتحميل الفيديو للبث
+// 2. مسار البث المباشر للفيديوهات الكبيرة
 app.get('/stream/:messageId', async (req, res) => {
   try {
     const messageId = parseInt(req.params.messageId);
@@ -137,7 +166,6 @@ app.get('/stream/:messageId', async (req, res) => {
   }
 });
 
-// 3. بقية المسارات الأساسية
 app.get('/api/media-list', (req, res) => {
   res.json({
     success: true,
