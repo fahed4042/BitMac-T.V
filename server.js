@@ -13,8 +13,8 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 app.use(cors());
-app.use(express.json({ limit: '2000mb' }));
-app.use(express.urlencoded({ limit: '2000mb', extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(express.static('public'));
 
 const uploadDir = path.join(__dirname, 'tmp');
@@ -27,10 +27,7 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 
-const upload = multer({ 
-  storage: storage,
-  limits: { fileSize: 2000 * 1024 * 1024 }
-});
+const upload = multer({ storage: storage });
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '8740811206:AAG29igXLxFAZ9XjPoGbfAVOVMMsDYbnZxo';
 const CHAT_ID = process.env.CHAT_ID || '1544455907';
@@ -49,7 +46,7 @@ const client = new TelegramClient(stringSession, API_ID, API_HASH, {
   try {
     console.log('جاري الاتصال ببروتوكول Telegram MTProto...');
     await client.start({ botAuthToken: BOT_TOKEN });
-    console.log(`تم الاتصال بنجاح! السيرفر جاهز استقبال الملفات.`);
+    console.log('تم الاتصال بنجاح! السيرفر جاهز استقبال الملفات.');
 
     client.addEventHandler(async (event) => {
       const message = event.message;
@@ -57,20 +54,6 @@ const client = new TelegramClient(stringSession, API_ID, API_HASH, {
         console.log('تم استقبال ملف جديد من تيليجرام!');
         
         let messageIdToSave = message.id;
-
-        if (message.chatId && message.chatId.toString() !== CHAT_ID) {
-            try {
-                const forwarded = await client.forwardMessages(CHAT_ID, {
-                    messages: [message.id],
-                    fromPeer: message.chatId
-                });
-                if (forwarded && forwarded[0]) {
-                  messageIdToSave = forwarded[0].id;
-                }
-            } catch (e) {
-                console.log('ملاحظة أثناء توجيه الملف:', e.message);
-            }
-        }
 
         const host = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
         const streamingUrl = `${host}/stream/${messageIdToSave}`;
@@ -88,7 +71,7 @@ const client = new TelegramClient(stringSession, API_ID, API_HASH, {
         mediaDatabase.unshift(newMediaItem);
         console.log('تم إضافة الفيديو بنجاح للمكتبة!');
       }
-    }, new NewMessage({}));
+    }, new NewMessage({ chats: [CHAT_ID] }));
 
   } catch (err) {
     console.error('خطأ في الاتصال بتيليجرام:', err.message);
@@ -96,9 +79,6 @@ const client = new TelegramClient(stringSession, API_ID, API_HASH, {
 })();
 
 app.post('/upload-video', upload.single('video'), async (req, res) => {
-  req.setTimeout(0);
-  res.setTimeout(0);
-
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'لم يتم إرفاق أي فيديو' });
   }
@@ -112,13 +92,13 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     const result = await client.sendFile(CHAT_ID, {
       file: filePath,
       caption: `🎬 *تم رفع عمل جديد!*\n📌 *الاسم:* ${workName}\n📺 *النوع:* ${type === 'series' ? 'مسلسل' : 'فيلم'} ${workEpisode}`,
-      workers: 4,
+      workers: 1,
     });
 
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
     const messageId = result.id;
-    const host = `${req.protocol}://${req.get('host')}`;
+    const host = process.env.RENDER_EXTERNAL_URL || `${req.protocol}://${req.get('host')}`;
     const streamingUrl = `${host}/stream/${messageId}`;
 
     const newMediaItem = {
@@ -233,9 +213,6 @@ app.delete('/api/folders/:id', (req, res) => {
   res.json({ success: true });
 });
 
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-server.timeout = 0;
-server.keepAliveTimeout = 600000;
