@@ -9,7 +9,6 @@ require('dotenv').config();
 
 const app = express();
 
-// مفتاح API الخاص بك
 const GOFILE_TOKEN = process.env.GOFILE_TOKEN || 'IDiI86XL4WCWd0tt0kJz4Tqa9Zab3qGU';
 
 app.use(cors());
@@ -17,7 +16,6 @@ app.use(express.json({ limit: '2000mb' }));
 app.use(express.urlencoded({ limit: '2000mb', extended: true }));
 app.use(express.static('public'));
 
-// مجلد التخزين المؤقت
 const uploadDir = path.join(__dirname, 'tmp_uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -35,14 +33,66 @@ const upload = multer({
 
 let mediaDatabase = [];
 
-// مسار جلب القائمة
 app.get('/api/media-list', (req, res) => {
   res.json({ success: true, count: mediaDatabase.length, data: mediaDatabase });
 });
 
-// مسار الرفع المباشر
+// دالة الرفع الذكية مع تجربة السيرفرات البديلة أوتوماتيكياً
+async function uploadToGoFile(filePath) {
+  let serverList = ['store1', 'store2', 'store3'];
+  
+  // 1. محاولة جلب السيرفر النشط حالياً من GoFile
+  try {
+    const serversRes = await axios.get('https://api.gofile.io/servers', {
+      headers: { Authorization: `Bearer ${GOFILE_TOKEN}` },
+      timeout: 10000
+    });
+    if (serversRes.data && serversRes.data.status === 'ok') {
+      const fetchedServers = serversRes.data.data?.servers;
+      if (fetchedServers && fetchedServers.length > 0) {
+        const primary = fetchedServers[0].name;
+        serverList.unshift(primary); // إدراج السيرفر الأساسي في البداية
+      }
+    }
+  } catch (e) {
+    console.log('تنبيه: تعذر جلب قائمة السيرفرات، سيتم استخدام السيرفرات الافتراضية.');
+  }
+
+  // 2. التجربة التتابعية حتى ينجح الرفع
+  let lastError = null;
+  for (const serverName of serverList) {
+    try {
+      console.log(`Trying upload to GoFile server: ${serverName}...`);
+      const formData = new FormData();
+      formData.append('file', fs.createReadStream(filePath));
+
+      const uploadUrl = `https://${serverName}.gofile.io/contents/upload/file`;
+      
+      const response = await axios.post(uploadUrl, formData, {
+        headers: {
+          ...formData.getHeaders(),
+          Authorization: `Bearer ${GOFILE_TOKEN}`
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        timeout: 1800000
+      });
+
+      if (response.data && response.data.status === 'ok') {
+        console.log(`Upload succeeded on server: ${serverName}`);
+        return response.data.data;
+      }
+    } catch (err) {
+      console.error(`Server ${serverName} failed:`, err.response?.data || err.message);
+      lastError = err;
+    }
+  }
+
+  throw new Error(lastError ? (lastError.response?.data?.message || lastError.message) : 'جميع سيرفرات GoFile غير متاحة حالياً');
+}
+
 app.post('/upload-video', upload.single('video'), async (req, res) => {
-  req.setTimeout(1800000); // 30 دقيقة
+  req.setTimeout(1800000);
   res.setTimeout(1800000);
 
   if (!req.file) {
@@ -56,68 +106,38 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     const workName = title || 'بدون عنوان';
     const workEpisode = episode || '';
 
-    // تجهيز الملف المرفوع
-    const formData = new FormData();
-    formData.append('file', fs.createReadStream(filePath));
+    const resultData = await uploadToGoFile(filePath);
+    const downloadUrl = resultData.downloadPage;
 
-    console.log('Uploading directly to GoFile API...');
+    const newMediaItem = {
+      id: Date.now(),
+      type: type || 'movie',
+      title: workName,
+      episode: workEpisode,
+      url: downloadUrl
+    };
 
-    // الرفع المباشر إلى API GoFile الرسمية بـ Authorization Token
-    const gofileResponse = await axios.post(
-      'https://api.gofile.io/contents/upload/file',
-      formData,
-      {
-        headers: {
-          ...formData.getHeaders(),
-          Authorization: `Bearer ${GOFILE_TOKEN}`
-        },
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        timeout: 1800000
-      }
-    );
+    mediaDatabase.unshift(newMediaItem);
 
-    if (gofileResponse.data && gofileResponse.data.status === 'ok') {
-      const resultData = gofileResponse.data.data;
-      const downloadUrl = resultData.downloadPage;
-
-      const newMediaItem = {
-        id: Date.now(),
-        type: type || 'movie',
-        title: workName,
-        episode: workEpisode,
-        url: downloadUrl
-      };
-
-      mediaDatabase.unshift(newMediaItem);
-
-      return res.json({
-        success: true,
-        url: downloadUrl,
-        item: newMediaItem
-      });
-    } else {
-      return res.status(500).json({ 
-        success: false, 
-        message: gofileResponse.data?.message || 'فشل الرفع إلى الخدمة السحابية' 
-      });
-    }
+    return res.json({
+      success: true,
+      url: downloadUrl,
+      item: newMediaItem
+    });
 
   } catch (err) {
-    console.error('Cloud Upload Error:', err.response?.data || err.message);
+    console.error('Final Upload Error:', err.message);
     return res.status(500).json({ 
       success: false, 
-      message: 'خطأ أثناء الرفع السحابي: ' + (err.response?.data?.message || err.message) 
+      message: 'خطأ أثناء الرفع السحابي: ' + err.message 
     });
   } finally {
-    // حذف الملف المؤقت من السيرفر
     if (fs.existsSync(filePath)) {
       try { fs.unlinkSync(filePath); } catch (e) {}
     }
   }
 });
 
-// مسار السحب برابط
 app.post('/upload-video-url', (req, res) => {
   const { url, title } = req.body;
   if (!url || !title) {
