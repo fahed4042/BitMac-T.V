@@ -3,73 +3,69 @@ const multer = require('multer');
 const axios = require('axios');
 const FormData = require('form-data');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '500mb' })); // زيادة الحد المسموح لبيانات JSON
-app.use(express.urlencoded({ limit: '500mb', extended: true }));
+app.use(express.json({ limit: '2000mb' }));
+app.use(express.urlencoded({ limit: '2000mb', extended: true }));
 app.use(express.static('public'));
 
-// استخدام الذاكرة المؤقتة لحفظ الملف مؤقتاً قبل إرساله لتيليجرام
-const upload = multer({ 
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 2000 * 1024 * 1024 } // رفع الحد إلى 2 جيجابايت للملف الواحد
+// 1. استخدام التخزين المؤقت على القرص لمنع انهيار السيرفر (RAM Out of Memory)
+const uploadDir = path.join(__dirname, 'tmp_uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
 
-// التوكن الخاص ببوتك والمعرف
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 2000 * 1024 * 1024 } // 2 جيجابايت
+});
+
 const BOT_TOKEN = '8740811206:AAG29igXLxFAZ9XjPoGbfAVOVMMsDYbnZxo';
 const CHAT_ID = '1544455907'; 
 
-// مصفوفة لتخزين الأفلام والمسلسلات في الذاكرة
+// تنبيه: لرفع ملفات أكبر من 50MB يجب ربطه بسيرفر Telegram Bot API محلي (أو تغيير الرابط)
+const TELEGRAM_API_URL = process.env.LOCAL_TELEGRAM_API || `https://api.telegram.org/bot${BOT_TOKEN}`;
+
 let mediaDatabase = [];
 
-// وظيفة لإرسال رسالة نصية أو تفاصيل إلى تيليجرام
-async function sendTelegramMessage(text) {
-  try {
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      chat_id: CHAT_ID,
-      text: text,
-      parse_mode: 'Markdown'
-    });
-  } catch (err) {
-    console.error('Telegram Message Error:', err.message);
-  }
-}
-
-// 1. مسار رفع الفيديو عبر تيليجرام والحفظ التلقائي
 app.post('/upload-video', upload.single('video'), async (req, res) => {
-  // زيادة مهلة الاتصال لهذا المسار لتجنب انقطاع الاتصال عند 65%
-  req.setTimeout(600000); // 10 دقائق
-  res.setTimeout(600000);
+  req.setTimeout(1800000); // 30 دقيقة
+  res.setTimeout(1800000);
+
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: 'لم يتم إرفاق أي فيديو' });
+  }
+
+  const filePath = req.file.path;
 
   try {
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: 'لم يتم إرفاق أي فيديو' });
-    }
-
     const { title, type, episode } = req.body;
     const workName = title || 'بدون عنوان';
     const workEpisode = episode || '';
 
-    // إعداد البيانات لإرسالها لتيليجرام
+    // 2. إرسال الملف عبر Stream لتوفير الذاكرة
     const formData = new FormData();
     formData.append('chat_id', CHAT_ID);
-    formData.append('video', req.file.buffer, {
-      filename: req.file.originalname || 'video.mp4',
-      contentType: req.file.mimetype
-    });
+    formData.append('video', fs.createReadStream(filePath));
     formData.append('caption', `🎬 *تم رفع عمل جديد!*\n📌 *الاسم:* ${workName}\n📺 *النوع:* ${type === 'series' ? 'مسلسل' : 'فيلم'} ${workEpisode}`);
 
-    // إرسال الفيديو إلى بوت تيليجرام مع مهلة زمنية طويلة
     const telegramResponse = await axios.post(
-      `https://api.telegram.org/bot${BOT_TOKEN}/sendVideo`,
+      `${TELEGRAM_API_URL}/sendVideo`,
       formData,
       {
         headers: formData.getHeaders(),
         maxContentLength: Infinity,
         maxBodyLength: Infinity,
-        timeout: 540000 // 9 دقائق مهلة لتيليجرام
+        timeout: 1800000
       }
     );
 
@@ -78,12 +74,15 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
       const videoObj = result.video || result.document;
       const fileId = videoObj.file_id;
 
-      // جلب رابط التحميل المباشر للملف من سيرفرات تيليجرام
-      const fileRoute = await axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`);
-      const filePath = fileRoute.data.result.file_path;
-      const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
+      // جلب مسار الملف
+      const fileRoute = await axios.get(`${TELEGRAM_API_URL}/getFile?file_id=${fileId}`);
+      const filePathOnTelegram = fileRoute.data.result.file_path;
+      
+      // رابط التحميل المباشر
+      const downloadUrl = TELEGRAM_API_URL.includes('localhost') 
+        ? `${TELEGRAM_API_URL}/file/bot${BOT_TOKEN}/${filePathOnTelegram}`
+        : `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePathOnTelegram}`;
 
-      // حفظ العمل في قاعدة البيانات المؤقتة للسيرفر
       const newMediaItem = {
         id: Date.now(),
         type: type || 'movie',
@@ -93,113 +92,21 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
       };
       mediaDatabase.unshift(newMediaItem);
 
-      // إرسال إشعار تفصيلي مع الرابط إلى تيليجرام
-      await sendTelegramMessage(`✅ *تمت المعالجة بنجاح*\n🔗 *الرابط المباشر:* ${downloadUrl}`);
-
-      return res.json({ 
-        success: true, 
-        url: downloadUrl,
-        item: newMediaItem
-      });
+      return res.json({ success: true, url: downloadUrl, item: newMediaItem });
     } else {
       return res.status(500).json({ success: false, message: 'فشل الرفع إلى تيليجرام' });
     }
 
   } catch (err) {
-    console.error('Telegram Upload Error:', err.response?.data || err.message);
-    return res.status(500).json({ 
-      success: false, 
-      message: err.response?.data?.description || 'حدث خطأ أثناء رفع الفيديو، ربما حجم الملف كبير جداً أو انتهت مهلة الاتصال.' 
-    });
-  }
-});
-
-// 2. مسار إضافي لسحب أو حفظ الفيديو برابط مباشر وإرساله لتليجرام مباشرة بدون رفع ثقيل
-app.post('/upload-video-url', async (req, res) => {
-  try {
-    const { url, title, type, episode } = req.body;
-    if (!url || !title) {
-      return res.status(400).json({ success: false, message: 'الرابط والاسم مطلوبان' });
+    console.error('Upload Error:', err.message);
+    return res.status(500).json({ success: false, message: 'خطأ أثناء الرفع: ' + err.message });
+  } finally {
+    // 3. حذف الملف المؤقت فور الانتهاء لتوفير مساحة السيرفر
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
     }
-
-    const newMediaItem = {
-      id: Date.now(),
-      type: type || 'movie',
-      title: title,
-      episode: episode || '',
-      url: url
-    };
-    mediaDatabase.unshift(newMediaItem);
-
-    // إرسال اسم العمل ورابطه فوراً إلى تيليجرام
-    await sendTelegramMessage(`📥 *إضافة رابط جديد للمكتبة*\n📌 *الاسم:* ${title}\n🔗 *الرابط:* ${url}`);
-
-    res.json({ success: true, url: url, item: newMediaItem });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'حدث خطأ أثناء حفظ الرابط' });
   }
 });
 
-// 3. مسار API خارجي لجلب قائمة الأفلام والمسلسلات لتطبيقك
-app.get('/api/media-list', (req, res) => {
-  res.json({
-    success: true,
-    total: mediaDatabase.length,
-    data: mediaDatabase
-  });
-});
-
-// 4. مسار API لتعديل رابط فيديو أو اسم عمل موجود مسبقاً
-app.put('/api/media-update/:id', (req, res) => {
-  const { id } = req.params;
-  const { url, title, episode } = req.body;
-  
-  const item = mediaDatabase.find(m => m.id == id);
-  if (!item) {
-    return res.status(404).json({ success: false, message: 'العنصر غير موجود' });
-  }
-
-  if (url) item.url = url;
-  if (title) item.title = title;
-  if (episode !== undefined) item.episode = episode;
-
-  res.json({ success: true, message: 'تم التحديث بنجاح', item });
-});
-
-// 5. مسار API لحذف عمل
-app.delete('/api/media-delete/:id', (req, res) => {
-  const { id } = req.params;
-  const initialLength = mediaDatabase.length;
-  mediaDatabase = mediaDatabase.filter(m => m.id != id);
-
-  if (mediaDatabase.length === initialLength) {
-    return res.status(404).json({ success: false, message: 'العنصر غير موجود' });
-  }
-
-  res.json({ success: true, message: 'تم الحذف بنجاح' });
-});
-
-const PORT = process.env.PORT || 10000;
-const server = app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  startKeepAlive();
-});
-
-// زيادة المهلة العامة للسيرفر لمنع انقطاع الاتصال المفاجئ
-server.timeout = 600000; // 10 دقائق
-server.keepAliveTimeout = 600000;
-
-// آلية لمنع خمول سيرفر Render (Keep-Alive كل 4 دقائق)
-function startKeepAlive() {
-  const RENDER_URL = process.env.RENDER_EXTERNAL_URL; // رابط سيرفرك على Render تلقائياً إذا توفر
-  if (!RENDER_URL) return;
-
-  setInterval(async () => {
-    try {
-      await axios.get(`${RENDER_URL}/api/media-list`);
-      console.log('Keep-alive ping sent successfully.');
-    } catch (e) {
-      console.log('Keep-alive ping failed:', e.message);
-    }
-  }, 4 * 60 * 1000); // كل 4 دقائق
-}
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
