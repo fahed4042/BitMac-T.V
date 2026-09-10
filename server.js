@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
+app.set('trust proxy', 1); // ضروري جداً لتعمل منصة Render بشكل صحيح وتمنع ظهور undefined
 app.use(cors());
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
@@ -45,8 +46,9 @@ app.post('/upload-video', upload.single('video'), (req, res) => {
     const workName = title || 'بدون عنوان';
     const workEpisode = episode || '';
 
-    const host = req.get('host');
-    const protocol = req.protocol;
+    // التقاط الرابط والنطاق بأمان تام من بروكسي Render
+    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.headers['x-forwarded-host'] || req.get('host');
     const directUrl = `${protocol}://${host}/uploads/${req.file.filename}`;
 
     const newMediaItem = {
