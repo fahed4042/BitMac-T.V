@@ -35,31 +35,14 @@ const upload = multer({
 
 let mediaDatabase = [];
 
+// مسار جلب القائمة
 app.get('/api/media-list', (req, res) => {
   res.json({ success: true, count: mediaDatabase.length, data: mediaDatabase });
 });
 
-// دالة جلب سيرفر فعال وموثوق من GoFile
-async function getGoFileServer() {
-  try {
-    const res = await axios.get('https://api.gofile.io/servers', {
-      headers: { Authorization: `Bearer ${GOFILE_TOKEN}` },
-      timeout: 10000
-    });
-    if (res.data && res.data.status === 'ok') {
-      const servers = res.data.data?.servers;
-      if (servers && servers.length > 0) {
-        return servers[0].name; // يرجع اسم السيرفر النشط مثل store2, store3 ...
-      }
-    }
-  } catch (e) {
-    console.error('Failed to fetch active server, using direct fallback:', e.message);
-  }
-  return 'api'; // fallback سيرفر رئيسي في حال فشل الاستعلام
-}
-
+// مسار الرفع المباشر
 app.post('/upload-video', upload.single('video'), async (req, res) => {
-  req.setTimeout(1800000);
+  req.setTimeout(1800000); // 30 دقيقة
   res.setTimeout(1800000);
 
   if (!req.file) {
@@ -73,23 +56,15 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     const workName = title || 'بدون عنوان';
     const workEpisode = episode || '';
 
-    // 1. جلب السيرفر الشغال حالياً
-    const targetServer = await getGoFileServer();
-
-    // 2. تجهيز البيانات وتمرير التوكين داخل Form Data
+    // تجهيز الملف المرفوع
     const formData = new FormData();
-    formData.append('token', GOFILE_TOKEN);
     formData.append('file', fs.createReadStream(filePath));
 
-    // اختيار رابط الرفع الصحيح بناءً على السيرفر المسترجع
-    const uploadUrl = targetServer === 'api' 
-      ? `https://api.gofile.io/contents/upload/file`
-      : `https://${targetServer}.gofile.io/contents/upload/file`;
+    console.log('Uploading directly to GoFile API...');
 
-    console.log(`Uploading to: ${uploadUrl}`);
-
+    // الرفع المباشر إلى API GoFile الرسمية بـ Authorization Token
     const gofileResponse = await axios.post(
-      uploadUrl,
+      'https://api.gofile.io/contents/upload/file',
       formData,
       {
         headers: {
@@ -135,12 +110,14 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
       message: 'خطأ أثناء الرفع السحابي: ' + (err.response?.data?.message || err.message) 
     });
   } finally {
+    // حذف الملف المؤقت من السيرفر
     if (fs.existsSync(filePath)) {
       try { fs.unlinkSync(filePath); } catch (e) {}
     }
   }
 });
 
+// مسار السحب برابط
 app.post('/upload-video-url', (req, res) => {
   const { url, title } = req.body;
   if (!url || !title) {
