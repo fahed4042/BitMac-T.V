@@ -3,6 +3,9 @@ const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
+const FormData = require('form-data');
+require('dotenv').config();
 
 const app = express();
 app.set('trust proxy', 1);
@@ -10,12 +13,11 @@ app.use(cors());
 app.use(express.json({ limit: '500mb' }));
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
 
-const uploadDir = path.join(__dirname, 'public', 'uploads');
+const uploadDir = path.join(__dirname, 'tmp');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-app.use('/uploads', express.static(uploadDir));
 app.use(express.static('public'));
 
 const storage = multer.diskStorage({
@@ -34,19 +36,40 @@ const upload = multer({
 
 let mediaDatabase = [];
 
-app.post('/upload-video', upload.single('video'), (req, res) => {
+app.post('/upload-video', upload.single('video'), async (req, res) => {
+  let filePath = null;
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'لم يتم إرفاق أي فيديو' });
     }
 
+    filePath = req.file.path;
     const { title, type, episode, folderId } = req.body;
     const workName = title || 'بدون عنوان';
     const workEpisode = episode || '';
 
-    // استخدام رابط رندر الأساسي مباشرة لتجنب أي مشاكل في الروابط
-    const baseUrl = process.env.RENDER_EXTERNAL_URL || `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers['x-forwarded-host'] || req.get('host') || 'localhost:10000'}`;
-    const directUrl = `${baseUrl}/uploads/${req.file.filename}`;
+    const form = new FormData();
+    form.append('reqtype', 'upload-file');
+    form.append('fileToUpload', fs.createReadStream(filePath));
+
+    const catboxRes = await axios.post('https://catbox.moe/user/api.php', form, {
+      headers: {
+        ...form.getHeaders()
+      },
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+      timeout: 600000
+    });
+
+    const directUrl = catboxRes.data ? catboxRes.data.trim() : '';
+
+    if (!directUrl || !directUrl.startsWith('http')) {
+      throw new Error('فشل الحصول على رابط مباشر من Catbox');
+    }
+
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
 
     const newMediaItem = {
       id: Date.now().toString(),
@@ -61,12 +84,15 @@ app.post('/upload-video', upload.single('video'), (req, res) => {
 
     res.json({ 
       success: true, 
-      message: 'تم رفع الفيديو بنجاح',
+      message: 'تم الرفع إلى Catbox بنجاح',
       item: newMediaItem
     });
   } catch (err) {
-    console.error('Upload Error:', err);
-    res.status(500).json({ success: false, message: 'خطأ: ' + err.message });
+    if (filePath && fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch(e) {}
+    }
+    console.error('Catbox Upload Error:', err.message);
+    res.status(500).json({ success: false, message: 'خطأ أثناء الرفع لـ Catbox: ' + (err.response?.data || err.message) });
   }
 });
 
@@ -113,14 +139,6 @@ app.put('/api/media-update/:id', (req, res) => {
 
 app.delete('/api/media-delete/:id', (req, res) => {
   const { id } = req.params;
-  const item = mediaDatabase.find(m => m.id == id);
-  if (item && item.url.includes('/uploads/')) {
-    const filename = path.basename(item.url);
-    const filePath = path.join(uploadDir, filename);
-    if (fs.existsSync(filePath)) {
-      try { fs.unlinkSync(filePath); } catch (e) {}
-    }
-  }
   mediaDatabase = mediaDatabase.filter(m => m.id != id);
   res.json({ success: true });
 });
